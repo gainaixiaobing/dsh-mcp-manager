@@ -1,12 +1,12 @@
 {
   "name": "dsh-mcp-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "轻量级本机 MCP 服务管理器：查看、启停、增删、导出已接入 DeepSeek Harness 的 MCP 服务，不含插件市场与 OAuth 授权。",
+  "description": "轻量级 MCP 服务管理器：查看/启停/增删/导入导出/握手探针，管理 DeepSeek Harness 已接入与本机其它客户端的 MCP 服务。",
   "type": "module",
-  "main": "index.js",
+  "main": "lib/index.js",
   "exports": {
-    ".": "./index.js",
+    ".": "./lib/index.js",
     "./client": "./client.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
@@ -14,11 +14,13 @@
   },
   "files": [
     "index.js",
+    "lib",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "deepseek-harness",
@@ -27,7 +29,8 @@
     "cordis",
     "mcp",
     "mcp-manager",
-    "mcp-inventory"
+    "mcp-inventory",
+    "mcp-probe"
   ],
   "license": "MIT",
   "dsh": {

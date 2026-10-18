@@ -6,7 +6,9 @@
     - id: mcp-manager
       name: 'dsh-mcp-manager'
       config:
-        # 是否挂载同源只读 HTTP API（/mcp-manager/api），供设置页使用。
+        # 是否挂载同源 HTTP API（/mcp-manager/api），供设置页使用。
         webApi: true
         # 工具清单里是否附带工具描述（false 可让列表更精简）。
         includeDescriptions: true
+        # 受管连接存储路径（可省略；默认 <DSH_HOME>/mcp-manager/connections-<profile>.json）。
+        # storePath: /absolute/path/connections.json

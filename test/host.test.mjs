@@ -1,27 +1,37 @@
 /**
- * dsh-mcp-manager 主机半区离线测试（不依赖 dsh 运行时）。
+ * dsh-mcp-manager Host 半区离线测试（不启动 Harness）。
  *
- * 覆盖：条目枚举与状态判定、服务解析、启停、新增/更新、移除、导出脱敏，
- * 以及注册到 ToolRuntime 的工具定义是否满足 Harness 的 JSON Schema 子集。
+ * 覆盖：清单/解析、受管存储持久化、启停/增删/编辑、mcpServers 导入导出、
+ * MCP 握手探针（stdio + streamable-http）、工具 schema 子集校验。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { apply, createManager, normalizePluginConfig } from '../index.js';
+import { createServer } from 'node:http';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { createManager, normalizePluginConfig } from '../lib/index.js';
+import { registerTools } from '../lib/tools.js';
+import { normalizeRecord, toMcpServersJson, fromMcpServersJson } from '../lib/config.js';
+import { scanImports, parseMcpServersText, parseJsonRelaxed, stripJsonc } from '../lib/importers.js';
+import { sanitizeText, sanitizeUrl } from '../lib/sanitize.js';
+import { probeRecord, probeStdio } from '../lib/probe.js';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const STUB = join(HERE, 'fixtures', 'stub-mcp.mjs');
+const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client';
 
 // ─── 假运行时 ────────────────────────────────────────────────────────────────
 
 class FakeTools {
-  constructor() {
-    this.defs = new Map();
-  }
-
+  defs = new Map();
   register(definition) {
     if (!definition?.name) throw new Error('tool name required');
-    if (this.defs.has(definition.name)) throw new Error(`duplicate tool ${definition.name}`);
     this.defs.set(definition.name, definition);
     return () => this.defs.delete(definition.name);
   }
-
   schemas() {
     return [...this.defs.values()].map((definition) => ({
       name: definition.name,
@@ -31,103 +41,100 @@ class FakeTools {
   }
 }
 
+function makeEntry({ id, config, disabled = false }, tools) {
+  const entry = {
+    options: { id, name: MCP_CLIENT, config, disabled },
+    fiber: undefined,
+    toolNames: [],
+  };
+  Object.defineProperty(entry, 'id', { get: () => entry.options.id });
+  Object.defineProperty(entry, 'disabled', { get: () => Boolean(entry.options.disabled) });
+  entry.mount = () => {
+    const serverName = entry.options.config.serverName;
+    const names = ['echo', 'ping'];
+    entry.toolNames = [];
+    for (const raw of names) {
+      const name = `mcp__${serverName}__${raw}`;
+      if (tools.defs.has(name)) continue;
+      tools.register({ name, description: `${raw} for ${serverName}`, parameters: { type: 'object', additionalProperties: false, properties: {} } });
+      entry.toolNames.push(raw);
+    }
+    entry.fiber = { config: entry.options.config };
+  };
+  entry.unmount = () => {
+    const serverName = entry.options.config.serverName;
+    for (const raw of entry.toolNames) tools.defs.delete(`mcp__${serverName}__${raw}`);
+    entry.toolNames = [];
+    entry.fiber = undefined;
+  };
+  return entry;
+}
+
 class FakeLoader {
-  constructor() {
+  constructor(tools) {
+    this.tools = tools;
     this.store = new Map();
-    this.counter = 0;
   }
-
-  /** 注册一个 mcp-client 条目；enabled 时同步注册它的工具。 */
-  addEntry({ id, config, enabled = true }) {
-    const entry = {
-      options: { id, name: '@deepseek-ai/dsh-mcp-client', config, disabled: !enabled },
-      fiber: null,
-      toolNames: [],
-    };
-    Object.defineProperty(entry, 'id', { get: () => entry.options.id });
-    Object.defineProperty(entry, 'disabled', { get: () => Boolean(entry.options.disabled) });
-    this.store.set(id, entry);
-    if (enabled) {
-      entry.fiber = { config };
-      this.mountTools(entry);
-    }
-    return entry;
-  }
-
-  mountTools(entry) {
-    const serverName = entry.options.config.serverName;
-    const tools = {
-      echo: `Echo tool for ${serverName}`,
-      ping: `Ping tool for ${serverName}`,
-    };
-    entry.toolNames = [];
-    for (const [raw, description] of Object.entries(tools)) {
-      try {
-        this.tools.register({
-          name: `mcp__${serverName}__${raw}`,
-          description,
-          parameters: { type: 'object', additionalProperties: false, properties: {} },
-        });
-        entry.toolNames.push(raw);
-      } catch {
-        // 真实注册表会拒绝同名工具：后注册的同名服务拿不到工具，仅记录一条告警。
-      }
-    }
-  }
-
-  unmountTools(entry) {
-    const serverName = entry.options.config.serverName;
-    for (const raw of entry.toolNames) this.tools.defs.delete(`mcp__${serverName}__${raw}`);
-    entry.toolNames = [];
-  }
-
-  entries() {
-    return this.store.values();
-  }
-
+  entries() { return this.store.values(); }
   resolve(id) {
     const entry = this.store.get(id);
     if (!entry) throw new Error(`cannot resolve entry ${id}`);
     return entry;
   }
-
-  async create(options) {
-    if (this.store.has(options.id)) throw new Error(`duplicate entry ${options.id}`);
-    return this.addEntry({ id: options.id, config: options.config, enabled: options.disabled !== true });
+  addEntry({ id, config, disabled = false }) {
+    if (this.store.has(id)) throw new Error(`duplicate entry ${id}`);
+    const entry = makeEntry({ id, config, disabled }, this.tools);
+    this.store.set(id, entry);
+    if (!disabled) entry.mount();
+    return entry;
   }
-
+  async create({ id, name, config, disabled = false }) {
+    if (name !== MCP_CLIENT) throw new Error(`unexpected plugin ${name}`);
+    return this.addEntry({ id, config, disabled });
+  }
   async update(id, options) {
     const entry = this.resolve(id);
     const wasEnabled = !entry.disabled;
-    Object.assign(entry.options, options);
+    if (options.config !== undefined) entry.options.config = options.config;
+    if (options.disabled !== undefined) entry.options.disabled = options.disabled;
     if (entry.disabled) {
-      if (wasEnabled) this.unmountTools(entry);
-      entry.fiber = null;
+      if (wasEnabled) entry.unmount();
+      entry.fiber = undefined;
     } else {
       entry.fiber = { config: entry.options.config };
-      if (!wasEnabled || !entry.toolNames?.length) this.mountTools(entry);
+      if (!wasEnabled || entry.toolNames.length === 0) entry.mount();
     }
   }
-
   remove(id) {
     const entry = this.resolve(id);
-    if (!entry.disabled) this.unmountTools(entry);
+    if (!entry.disabled) entry.unmount();
     this.store.delete(id);
   }
 }
 
-function makeCtx({ entries = [], tools } = {}) {
-  const loader = new FakeLoader();
-  loader.tools = tools ?? new FakeTools();
-  for (const spec of entries) loader.addEntry(spec);
+function makeCtx(tools = new FakeTools()) {
+  const loader = new FakeLoader(tools);
   const ctx = {
-    tools: loader.tools,
+    tools,
     loader,
-    logger: { info() {}, warn() {} },
+    logger: { info() {}, warn() {}, debug() {} },
     effect() {},
     inject() {},
   };
-  return { ctx, loader };
+  return { ctx, loader, tools };
+}
+
+async function tempStore(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-test-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  return join(dir, 'connections.json');
+}
+
+async function seedStore(storePath, records) {
+  await mkdir(dirname(storePath), { recursive: true });
+  const servers = {};
+  for (const record of records) servers[record.serverName] = normalizeRecord(record, { source: 'managed' });
+  await writeFile(storePath, JSON.stringify({ version: 1, updatedAt: Date.now(), servers }, null, 2));
 }
 
 // ─── Harness JSON Schema 子集校验 ────────────────────────────────────────────
@@ -139,16 +146,12 @@ const ALLOWED_KEYS = new Set([
 ]);
 
 function checkSchema(schema, path = '$') {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-    throw new Error(`${path} must be a schema object`);
-  }
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error(`${path} must be a schema object`);
   for (const key of Object.keys(schema)) {
     if (!ALLOWED_KEYS.has(key)) throw new Error(`${path}.${key} is not supported`);
   }
   if (Object.hasOwn(schema, 'required')) {
-    if (!Array.isArray(schema.required)) {
-      throw new Error(`${path}.required must be an array at object level (property-level required:true is not accepted by raw definitions)`);
-    }
+    if (!Array.isArray(schema.required)) throw new Error(`${path}.required must be an array`);
     const properties = schema.properties ?? {};
     for (const name of schema.required) {
       if (!Object.hasOwn(properties, name)) throw new Error(`${path}.required names undeclared property ${name}`);
@@ -156,298 +159,429 @@ function checkSchema(schema, path = '$') {
   }
   if (Object.hasOwn(schema, 'type')) {
     if (!SCHEMA_TYPES.has(schema.type)) throw new Error(`${path}.type invalid: ${schema.type}`);
-    if (schema.type === 'object') {
-      if (schema.properties !== undefined && typeof schema.properties !== 'object') {
-        throw new Error(`${path}.properties must be an object`);
-      }
-      if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== 'boolean') {
-        throw new Error(`${path}.additionalProperties must be boolean`);
-      }
-    }
     if (schema.type === 'array' && schema.items !== undefined) checkSchema(schema.items, `${path}.items`);
+    if (schema.type === 'object' && schema.properties !== undefined && typeof schema.properties !== 'object') {
+      throw new Error(`${path}.properties must be an object`);
+    }
   }
-  for (const [name, child] of Object.entries(schema.properties ?? {})) {
-    checkSchema(child, `${path}.properties.${name}`);
-  }
-  if (Array.isArray(schema.oneOf)) {
-    schema.oneOf.forEach((branch, index) => checkSchema(branch, `${path}.oneOf[${index}]`));
-  }
+  for (const [name, child] of Object.entries(schema.properties ?? {})) checkSchema(child, `${path}.properties.${name}`);
+  if (Array.isArray(schema.oneOf)) schema.oneOf.forEach((branch, index) => checkSchema(branch, `${path}.oneOf[${index}]`));
 }
 
-// ─── 测试 ────────────────────────────────────────────────────────────────────
+// ─── 配置/导入解析 ──────────────────────────────────────────────────────────
 
-test('plugin exports a Cordis plugin shape', () => {
-  assert.equal(typeof apply, 'function');
-  const config = normalizePluginConfig({ webApi: false, unknown: 1 });
-  assert.deepEqual(config, { webApi: false, includeDescriptions: true });
+test('normalizeRecord validates and normalizes connection records', () => {
+  const http = normalizeRecord({ serverName: 'srv-1', transport: 'http', url: 'https://a.example/mcp', headers: { Authorization: 'Bearer x' } });
+  assert.equal(http.transport, 'streamable-http');
+  assert.equal(http.url, 'https://a.example/mcp');
+  assert.equal(http.toolCallTimeoutMs, 180000);
+  assert.equal(http.serverName, 'srv-1');
+
+  const stdio = normalizeRecord({ serverName: 'srv-2', transport: 'stdio', command: 'node', args: ['x.mjs'], env: { A: '1' } });
+  assert.deepEqual(stdio.args, ['x.mjs']);
+  assert.deepEqual(stdio.env, { A: '1' });
+
+  assert.throws(() => normalizeRecord({ serverName: 'bad name', transport: 'stdio', command: 'node' }), /serverName/);
+  assert.throws(() => normalizeRecord({ serverName: 'x', transport: 'grpc' }), /transport/);
+  assert.throws(() => normalizeRecord({ serverName: 'x', transport: 'streamable-http' }), /url/);
+  assert.throws(() => normalizeRecord({ serverName: 'x', transport: 'stdio' }), /command/);
 });
 
-test('list reports enabled/disabled servers and per-server tool counts', () => {
-  const { ctx } = makeCtx({
-    entries: [
-      { id: 'mcp-a', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://example.com/mcp?token=secret' } },
-      { id: 'mcp-b', config: { serverName: 'beta', transport: 'stdio', command: '/usr/bin/node', args: ['x'] }, enabled: false },
-    ],
-  });
-  const manager = createManager(ctx);
+test('parseMcpServersText accepts the common mcpServers shapes and rejects SSE', () => {
+  const a = parseMcpServersText(JSON.stringify({ mcpServers: { a: { command: 'node', args: ['a.js'] } } }));
+  assert.equal(a.records.a.transport, 'stdio');
+
+  const b = parseMcpServersText(JSON.stringify({ servers: { b: { type: 'http', url: 'https://b.example/mcp' } } }));
+  assert.equal(b.records.b.transport, 'streamable-http');
+
+  const c = parseMcpServersText(JSON.stringify([{ name: 'c', url: 'https://c.example/mcp' }]));
+  assert.equal(c.records.c.transport, 'streamable-http');
+
+  const d = parseMcpServersText(JSON.stringify({ context_servers: { zed: { command: 'zed-mcp' } } }));
+  assert.equal(d.records.zed.command, 'zed-mcp');
+
+  const sse = parseMcpServersText(JSON.stringify({ mcpServers: { s: { type: 'sse', url: 'https://s.example/sse' } } }));
+  assert.equal(Object.keys(sse.records).length, 0);
+  assert.match(sse.errors[0], /SSE/);
+
+  assert.throws(() => parseMcpServersText('{oops'), /不是合法 JSON/);
+});
+
+test('fromMcpServersJson/toMcpServersJson round-trips stdio and http', () => {
+  const stdio = fromMcpServersJson('t', { command: 'npx', args: ['-y', 'pkg'], env: { K: 'v' } });
+  assert.deepEqual(toMcpServersJson(stdio), { type: 'stdio', command: 'npx', args: ['-y', 'pkg'], env: { K: 'v' } });
+  const http = fromMcpServersJson('h', { url: 'https://h.example/mcp', headers: { 'X-A': 'b' } });
+  assert.deepEqual(toMcpServersJson(http), { type: 'streamable-http', url: 'https://h.example/mcp', headers: { 'X-A': 'b' } });
+});
+
+// ─── 清单 / 受管存储 ────────────────────────────────────────────────────────
+
+test('managed records are provisioned on init and listed as managed', async (t) => {
+  const storePath = await tempStore(t);
+  await seedStore(storePath, [{ serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' }]);
+  const { ctx, loader } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+
+  assert.ok(loader.store.has('mcp-manager-alpha'));
   const { servers, summary } = manager.list();
-  assert.equal(servers.length, 2);
   const alpha = servers.find((server) => server.serverName === 'alpha');
+  assert.equal(alpha.origin, 'managed');
   assert.equal(alpha.status, 'connected');
   assert.equal(alpha.toolCount, 2);
-  assert.equal(alpha.endpoint, 'https://example.com/mcp', 'query string must be redacted');
-  const beta = servers.find((server) => server.serverName === 'beta');
-  assert.equal(beta.status, 'disabled');
-  assert.equal(beta.toolCount, 0);
-  assert.equal(beta.endpoint, 'node（+1 个参数）');
-  assert.equal(summary.total, 2);
-  assert.equal(summary.enabled, 1);
-  assert.equal(summary.disabled, 1);
-  assert.equal(summary.connected, 1);
-  assert.equal(summary.toolCount, 2);
+  assert.equal(summary.managed, 1);
 });
 
-test('resolve accepts exact name, entry id, and unique substring', () => {
-  const { ctx } = makeCtx({
-    entries: [
-      { id: 'mcp-alpha', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' } },
-      { id: 'mcp-beta', config: { serverName: 'beta', transport: 'streamable-http', url: 'https://b.example/mcp' } },
-    ],
-  });
-  const manager = createManager(ctx);
-  assert.equal(manager.inspect('alpha').serverName, 'alpha');
-  assert.equal(manager.inspect('mcp-beta').serverName, 'beta');
-  assert.equal(manager.inspect('alph').serverName, 'alpha');
-  assert.throws(() => manager.inspect('zzz'), /找不到 MCP 服务/);
-  assert.throws(() => manager.inspect(''), /缺少 server 参数/);
-});
-
-test('duplicate serverName entries are flagged instead of silently double-counted', () => {
-  const { ctx } = makeCtx({
-    entries: [
-      { id: 'include:mcp-alpha', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' } },
-      { id: 'mcp-alpha-alpha', config: { serverName: 'alpha', transport: 'stdio', command: 'node', args: ['x'] } },
-      { id: 'include:mcp-beta', config: { serverName: 'beta', transport: 'streamable-http', url: 'https://b.example/mcp' } },
-    ],
-  });
-  const manager = createManager(ctx);
-  const { servers, summary } = manager.list();
-  assert.equal(summary.total, 3);
-  assert.equal(summary.uniqueServers, 2);
-  assert.equal(summary.duplicateServers, 1);
-  assert.equal(summary.toolCount, 4, 'tools are counted once per shared namespace');
-  const alpha = servers.filter((server) => server.serverName === 'alpha');
-  assert.equal(alpha.length, 2);
-  assert.ok(alpha.every((server) => server.duplicate === true));
-  assert.equal(alpha.find((server) => server.origin === 'profile').id, 'include:mcp-alpha');
-  assert.equal(alpha.find((server) => server.origin === 'plugin').id, 'mcp-alpha-alpha');
-
-  // 同名时不能靠服务名猜：必须用条目 id
-  assert.throws(() => manager.inspect('alpha'), /2 个同名条目/);
-  assert.equal(manager.inspect('include:mcp-alpha').id, 'include:mcp-alpha');
-  assert.equal(manager.inspect('mcp-alpha-alpha').id, 'mcp-alpha-alpha');
-  // 宿主合成树里条目 id 带 include: 前缀，允许省略前缀传短 id
-  assert.equal(manager.inspect('mcp-alpha').id, 'include:mcp-alpha');
-});
-
-test('re-enabling a failed entry retries apply and can recover', async () => {
+test('setEnabled persists for managed servers and reloads on a new manager', async (t) => {
+  const storePath = await tempStore(t);
   const { ctx, loader } = makeCtx();
-  const entry = loader.addEntry({
-    id: 'mcp-broken',
-    config: { serverName: 'broken', transport: 'streamable-http', url: 'https://broken.example/mcp' },
-  });
-  entry.fiber = undefined; // 模拟 apply 抛错
-  entry.toolNames = [];
-  for (const name of [...loader.tools.defs.keys()]) loader.tools.defs.delete(name);
-  const manager = createManager(ctx);
-  assert.equal(manager.list().servers[0].status, 'failed');
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'beta', transport: 'streamable-http', url: 'https://b.example/mcp' });
+  assert.equal(manager.list().summary.connected, 1);
 
-  const retried = await manager.setEnabled('mcp-broken', true);
-  assert.equal(retried.retried, true);
-  assert.equal(retried.server.status, 'connected');
-  assert.equal(retried.server.toolCount, 2);
+  const off = await manager.setEnabled('beta', false);
+  assert.equal(off.persisted, true);
+  assert.equal(loader.store.get('mcp-manager-beta').disabled, true);
+  const store = JSON.parse(await readFile(storePath, 'utf8'));
+  assert.equal(store.servers.beta.enabled, false);
+
+  // 新 manager 从同一存储恢复（停用状态保留）
+  const { ctx: ctx2, loader: loader2 } = makeCtx();
+  const manager2 = createManager(ctx2, { storePath });
+  await manager2.init();
+  assert.equal(loader2.store.get('mcp-manager-beta').disabled, true);
+  assert.equal(manager2.list().servers.find((server) => server.serverName === 'beta').status, 'disabled');
+
+  const on = await manager2.setEnabled('beta', true);
+  assert.equal(on.persisted, true);
+  assert.equal(manager2.list().servers.find((server) => server.serverName === 'beta').status, 'connected');
 });
 
-test('an enabled entry without a fiber is reported as failed, not connected', () => {
+test('add/update/remove work for managed servers and touch the store', async (t) => {
+  const storePath = await tempStore(t);
   const { ctx, loader } = makeCtx();
-  const entry = loader.addEntry({
-    id: 'mcp-broken',
-    config: { serverName: 'broken', transport: 'streamable-http', url: 'https://broken.example/mcp' },
-  });
-  entry.fiber = undefined; // 模拟 apply 抛错：条目保留但从未启动
-  const manager = createManager(ctx);
-  const { servers, summary } = manager.list();
-  assert.equal(servers[0].status, 'failed');
-  assert.equal(servers[0].loaded, false);
-  assert.equal(servers[0].toolCount, 0, 'a failed entry must not claim namespace tools');
-  assert.equal(summary.failed, 1);
-  assert.equal(summary.connected, 0);
-  assert.equal(summary.toolCount, 0);
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
 
-  // 同名时若只有一条真正加载，另一条标记 failed 且只统计一份工具
-  const healthy = loader.addEntry({
-    id: 'mcp-ok',
-    config: { serverName: 'broken', transport: 'streamable-http', url: 'https://ok.example/mcp' },
-  });
-  assert.ok(healthy.fiber);
-  const after = manager.list();
-  assert.equal(after.summary.failed, 1);
-  assert.equal(after.summary.connected, 1);
-  assert.equal(after.summary.toolCount, 2);
-  const statuses = Object.fromEntries(after.servers.map((server) => [server.id, server.status]));
-  assert.equal(statuses['mcp-broken'], 'failed');
-  assert.equal(statuses['mcp-ok'], 'connected');
+  const added = await manager.add({ serverName: 'gamma', transport: 'stdio', command: process.execPath, args: [STUB] });
+  assert.equal(added.updated, false);
+  assert.equal(added.persisted, true);
+  assert.equal(added.toolCount, 2);
+
+  const updated = await manager.update('gamma', { env: { STUB_TOOLS: 'a,b,c' } });
+  assert.equal(updated.persisted, true);
+  let store = JSON.parse(await readFile(storePath, 'utf8'));
+  assert.deepEqual(store.servers.gamma.env, { STUB_TOOLS: 'a,b,c' });
+
+  const removed = await manager.remove('gamma');
+  assert.equal(removed.persisted, true);
+  store = JSON.parse(await readFile(storePath, 'utf8'));
+  assert.equal(store.servers.gamma, undefined);
+  assert.equal(loader.store.has('mcp-manager-gamma'), false);
 });
 
-test('set_enabled stops and restarts a server, and is idempotent', async () => {
-  const { ctx, loader } = makeCtx({
-    entries: [{ id: 'mcp-alpha', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' } }],
-  });
-  const manager = createManager(ctx);
-  const off = await manager.setEnabled('alpha', false);
-  assert.equal(off.changed, true);
+test('profile rows are runtime-only: toggle/update/remove warn about restart', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({ id: 'include:mcp-p', config: { serverName: 'profile-srv', transport: 'streamable-http', url: 'https://p.example/mcp' } });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+
+  const listed = manager.list().servers.find((server) => server.serverName === 'profile-srv');
+  assert.equal(listed.origin, 'profile');
+
+  const off = await manager.setEnabled('profile-srv', false);
+  assert.equal(off.persisted, false);
   assert.equal(off.server.status, 'disabled');
-  assert.equal(loader.tools.defs.size, 0, 'tools must be unregistered on disable');
 
-  const again = await manager.setEnabled('alpha', false);
-  assert.equal(again.changed, false);
+  const on = await manager.setEnabled('profile-srv', true);
+  assert.equal(on.persisted, false);
 
-  const on = await manager.setEnabled('alpha', true);
-  assert.equal(on.changed, true);
-  assert.equal(on.server.status, 'connected');
-  assert.equal(on.server.toolCount, 2);
-  assert.equal(loader.tools.defs.size, 2);
+  const updated = await manager.update('profile-srv', { url: 'https://p2.example/mcp' });
+  assert.equal(updated.persisted, false);
+  assert.match(updated.warning, /profile/);
+
+  const removed = await manager.remove('profile-srv');
+  assert.equal(removed.removed, true);
+  assert.equal(removed.persisted, false);
+  assert.match(removed.warning, /重启/);
 });
 
-test('add creates a new runtime entry and updates an existing one', async () => {
+test('add refuses a serverName already used by a profile row', async (t) => {
+  const storePath = await tempStore(t);
   const { ctx, loader } = makeCtx();
-  const manager = createManager(ctx);
-  const created = await manager.add({
-    serverName: 'fresh',
-    transport: 'streamable-http',
-    url: 'https://fresh.example/mcp',
-    headers: { Authorization: 'Bearer secret-token' },
-  });
-  assert.equal(created.updated, false);
-  assert.equal(created.id, 'mcp-manager-fresh');
-  assert.ok(loader.store.has('mcp-manager-fresh'));
-  assert.equal(loader.store.get('mcp-manager-fresh').options.config.headers.Authorization, 'Bearer secret-token');
-
-  const updated = await manager.add({
-    serverName: 'fresh',
-    transport: 'streamable-http',
-    url: 'https://fresh.example/mcp/v2',
-  });
-  assert.equal(updated.updated, true);
-  assert.equal(loader.store.get('mcp-manager-fresh').options.config.url, 'https://fresh.example/mcp/v2');
-  assert.equal(loader.store.get('mcp-manager-fresh').options.config.headers, undefined, 'updated config replaces the old one');
+  loader.addEntry({ id: 'include:mcp-p', config: { serverName: 'dup', transport: 'streamable-http', url: 'https://p.example/mcp' } });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await assert.rejects(
+    () => manager.add({ serverName: 'dup', transport: 'streamable-http', url: 'https://other.example/mcp' }),
+    /已被 profile 条目/,
+  );
 });
 
-test('add validates input', async () => {
+// ─── 导入 ────────────────────────────────────────────────────────────────────
+
+test('import previews and applies mcpServers JSON', async (t) => {
+  const storePath = await tempStore(t);
   const { ctx } = makeCtx();
-  const manager = createManager(ctx);
-  await assert.rejects(() => manager.add({ serverName: 'bad name', transport: 'stdio', command: 'node' }), /serverName/);
-  await assert.rejects(() => manager.add({ serverName: 'x', transport: 'grpc' }), /transport/);
-  await assert.rejects(() => manager.add({ serverName: 'x', transport: 'streamable-http' }), /url/);
-  await assert.rejects(() => manager.add({ serverName: 'x', transport: 'stdio' }), /command/);
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  const json = JSON.stringify({ mcpServers: { delta: { command: process.execPath, args: [STUB] } } });
+
+  const preview = await manager.import({ json });
+  assert.equal(preview.preview, true);
+  assert.equal(preview.records.length, 1);
+  assert.equal(preview.records[0].serverName, 'delta');
+
+  const applied = await manager.import({ json }, { apply: true });
+  assert.equal(applied.imported.length, 1);
+  assert.equal(applied.imported[0].toolCount, 2);
+  const store = JSON.parse(await readFile(storePath, 'utf8'));
+  assert.equal(store.servers.delta.transport, 'stdio');
 });
 
-test('remove drops the runtime entry and its tools', async () => {
-  const { ctx, loader } = makeCtx({
-    entries: [{ id: 'mcp-alpha', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' } }],
-  });
-  const manager = createManager(ctx);
-  const result = await manager.remove('alpha');
-  assert.equal(result.removed, true);
-  assert.equal(loader.store.size, 0);
-  assert.equal(loader.tools.defs.size, 0);
+test('scanImports returns empty sources when no known client config exists', async () => {
+  const result = await scanImports({ onlyClients: ['definitely-not-installed'] });
+  assert.deepEqual(result.sources, []);
+  assert.deepEqual(result.candidates, []);
 });
 
-test('exportPatch produces an installable patch and redacts credentials', async () => {
-  const { ctx } = makeCtx({
-    entries: [
-      {
-        id: 'mcp-alpha',
-        config: {
-          serverName: 'alpha',
-          transport: 'streamable-http',
-          url: 'https://a.example/mcp',
-          headers: { Authorization: 'Bearer leaking', 'X-Trace': 'on' },
-          toolCallTimeoutMs: 180000,
-        },
-      },
-      {
-        id: 'mcp-beta',
-        config: { serverName: 'beta', transport: 'stdio', command: 'node', args: ['server.js'], env: { API_KEY: 'leak' } },
-        enabled: false,
-      },
-    ],
-  });
-  const manager = createManager(ctx);
-  const { yaml, warnings } = manager.exportPatch();
-  assert.match(yaml, /^- insert:/m);
-  assert.match(yaml, /id: mcp-alpha/);
-  assert.match(yaml, /name: '@deepseek-ai\/dsh-mcp-client'/);
-  assert.match(yaml, /transport: streamable-http/);
-  assert.match(yaml, /url: https:\/\/a\.example\/mcp/);
-  assert.match(yaml, /!!js process\.env\.MCP_ALPHA_AUTHORIZATION/);
-  assert.doesNotMatch(yaml, /leaking/);
-  assert.doesNotMatch(yaml, /leak\b/);
-  assert.match(yaml, /disabled: true/);
-  assert.ok(warnings.length >= 2);
+// ─── 探针 ────────────────────────────────────────────────────────────────────
 
-  // 只导出单个服务
-  const single = manager.exportPatch('beta');
-  assert.match(single.yaml, /id: mcp-beta/);
-  assert.doesNotMatch(single.yaml, /id: mcp-alpha/);
+test('stdio probe performs an initialize + tools/list handshake', async () => {
+  const result = await probeRecord({
+    serverName: 'stub',
+    transport: 'stdio',
+    command: process.execPath,
+    args: [STUB],
+    env: { STUB_TOOLS: 'a,b,c' },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.transport, 'stdio');
+  assert.equal(result.toolCount, 3);
+  assert.deepEqual(result.tools, ['a', 'b', 'c']);
+  assert.ok(result.latencyMs >= 0);
 });
 
-test('registered tools declare schemas accepted by the harness subset', () => {
-  const tools = new FakeTools();
-  const { ctx } = makeCtx({
-    tools,
-    entries: [{ id: 'mcp-alpha', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' } }],
+test('stdio probe reports a clear error for a bad command', async () => {
+  const result = await probeStdio({ serverName: 'nope', transport: 'stdio', command: '/definitely/not/a/binary', args: [] }, { timeoutMs: 2000 });
+  assert.equal(result.ok, false);
+  assert.ok(result.error.length > 0);
+});
+
+test('http probe performs an initialize + tools/list handshake', async (t) => {
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', (chunk) => { body += chunk; });
+    request.on('end', () => {
+      let message = {};
+      try { message = JSON.parse(body); } catch { /* ignore */ }
+      response.setHeader('content-type', 'application/json');
+      if (message.method === 'initialize') {
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'http-stub', version: '1' } } }));
+        return;
+      }
+      if (message.method === 'tools/list') {
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'x' }, { name: 'y' }] } }));
+        return;
+      }
+      response.statusCode = 202;
+      response.end('');
+    });
   });
-  apply(ctx, { webApi: false });
-  const names = [...tools.defs.keys()].filter((name) => name.startsWith('mcp_manager_')).sort();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const result = await probeRecord({ serverName: 'http', transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp` });
+  assert.equal(result.ok, true);
+  assert.equal(result.protocolVersion, '2025-06-18');
+  assert.equal(result.toolCount, 2);
+  assert.equal(result.serverInfo.name, 'http-stub');
+});
+
+// ─── 导出 ────────────────────────────────────────────────────────────────────
+
+test('exportPatch redacts credentials and exportMcpServersJson uses ${ENV} placeholders', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({
+    serverName: 'secret-srv',
+    transport: 'streamable-http',
+    url: 'https://s.example/mcp',
+    headers: { Authorization: 'Bearer top-secret' },
+  });
+  const patch = await manager.export({ format: 'patch' });
+  assert.match(patch.content, /serverName: secret-srv/);
+  assert.match(patch.content, /!!js process\.env\.MCP_SECRET_SRV_AUTHORIZATION/);
+  assert.doesNotMatch(patch.content, /top-secret/);
+
+  const json = await manager.export({ format: 'json' });
+  assert.match(json.content, /"mcpServers"/);
+  assert.match(json.content, /\$\{MCP_SECRET_SRV_AUTHORIZATION\}/);
+  assert.doesNotMatch(json.content, /top-secret/);
+
+  const markdown = await manager.export({ format: 'markdown' });
+  assert.match(markdown.content, /secret-srv/);
+  assert.doesNotMatch(markdown.content, /top-secret/);
+});
+
+// ─── 脱敏 / JSONC / 探针诊断 ────────────────────────────────────────────────
+
+test('sanitizeText strips credentials from free text', () => {
+  const text = sanitizeText('Authorization: Bearer abcdef123456 got 401, url=https://u:p@h/mcp?token=secret123&x=1');
+  assert.doesNotMatch(text, /abcdef123456/);
+  assert.doesNotMatch(text, /secret123/);
+  assert.doesNotMatch(text, /u:p@h/);
+  assert.match(text, /\*\*\*/);
+  assert.match(sanitizeText('x-api-key: sk-abcdefghijk'), /x-api-key=\*\*\*/);
+  assert.match(sanitizeText('client_secret: "shhh"'), /client_secret[:=]\s*\*\*\*/);
+  assert.equal(sanitizeText('plain text'), 'plain text');
+  assert.ok(sanitizeText('a'.repeat(2000)).length <= 800);
+});
+
+test('sanitizeUrl hides userinfo and sensitive query params', () => {
+  const url = sanitizeUrl('https://user:pass@example.com/mcp?token=abc&x=1');
+  assert.doesNotMatch(url, /user:pass/);
+  assert.doesNotMatch(url, /token=abc/);
+  assert.match(url, /x=1/);
+});
+
+test('parseJsonRelaxed accepts JSONC and stripJsonc keeps strings intact', () => {
+  const jsonc = `{
+    // comment
+    "mcpServers": {
+      "a": { "url": "https://a.example/mcp?x=//not-a-comment", /* block */ "type": "http" },
+    },
+  }`;
+  const parsed = parseJsonRelaxed(jsonc);
+  assert.equal(parsed.mcpServers.a.url, 'https://a.example/mcp?x=//not-a-comment');
+  assert.equal(parsed.mcpServers.a.type, 'http');
+  const stripped = stripJsonc(jsonc);
+  assert.doesNotMatch(stripped, /\/\/\s*comment/);
+  assert.doesNotMatch(stripped, /\/\*\s*block\s*\*\//);
+  assert.match(stripped, /x=\/\/not-a-comment/);
+});
+
+test('import plan supports skip / overwrite / rename for conflicts', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({ id: 'include:mcp-p', config: { serverName: 'keep', transport: 'streamable-http', url: 'https://p.example/mcp' } });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'managed-one', transport: 'streamable-http', url: 'https://m.example/mcp' });
+
+  const json = JSON.stringify({
+    mcpServers: {
+      keep: { command: process.execPath, args: [STUB] },
+      'managed-one': { command: process.execPath, args: [STUB] },
+      fresh: { command: process.execPath, args: [STUB] },
+    },
+  });
+
+  // 预览：标注冲突
+  const preview = await manager.import({ json });
+  const byName = Object.fromEntries(preview.records.map((record) => [record.serverName, record]));
+  assert.equal(byName.keep.conflict, 'profile');
+  assert.equal(byName['managed-one'].conflict, 'managed');
+  assert.equal(byName.fresh.conflict, undefined);
+
+  // 默认 skip：只导入 fresh，两个冲突进 skipped
+  const skippedRun = await manager.import({ json }, { apply: true });
+  assert.deepEqual(skippedRun.imported.map((item) => item.serverName), ['fresh']);
+  assert.equal(skippedRun.skipped.filter((item) => item.includes('已存在')).length, 2);
+
+  // overwrite：受管记录可覆盖，profile 行跳过
+  const overwriteRun = await manager.import({ json }, { apply: true, onConflict: 'overwrite' });
+  assert.ok(overwriteRun.imported.some((item) => item.serverName === 'managed-one' && item.updated === true));
+  assert.ok(overwriteRun.skipped.some((item) => item.includes('profile 静态声明')));
+
+  // rename：未存在过的名字变成 -2
+  const renameRun = await manager.import({
+    json: JSON.stringify({ mcpServers: { fresh: { command: process.execPath, args: [STUB] } } }),
+  }, { apply: true, onConflict: 'rename' });
+  assert.deepEqual(renameRun.imported.map((item) => item.serverName), ['fresh-2']);
+
+  // enabled=false：导入但不启用
+  const disabledRun = await manager.import({
+    json: JSON.stringify({ mcpServers: { dormant: { command: process.execPath, args: [STUB] } } }),
+  }, { apply: true, enabled: false });
+  assert.equal(disabledRun.imported.length, 1);
+  const dormant = manager.list().servers.find((server) => server.serverName === 'dormant');
+  assert.equal(dormant.status, 'disabled');
+});
+
+test('probe reports structured error codes', async () => {
+  const refused = await probeRecord({ serverName: 'x', transport: 'streamable-http', url: 'http://127.0.0.1:1/mcp' }, { timeoutMs: 3000 });
+  assert.equal(refused.ok, false);
+  assert.ok(['connection_refused', 'timeout', 'unknown', 'http_4xx', 'http_5xx'].includes(refused.errorCode));
+
+  const missing = await probeStdio({ serverName: 'x', transport: 'stdio', command: '/definitely/not/a/binary', args: [] }, { timeoutMs: 2000 });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.errorCode, 'command_not_found');
+});
+
+// ─── 工具定义 ────────────────────────────────────────────────────────────────
+
+test('registered tools declare schemas accepted by the harness subset', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  registerTools(ctx, manager);
+  const names = [...ctx.tools.defs.keys()].filter((name) => name.startsWith('mcp_manager_')).sort();
   assert.deepEqual(names, [
     'mcp_manager_add',
     'mcp_manager_export',
+    'mcp_manager_import',
     'mcp_manager_inspect',
     'mcp_manager_list',
+    'mcp_manager_probe',
     'mcp_manager_remove',
+    'mcp_manager_scan',
     'mcp_manager_set_enabled',
+    'mcp_manager_update',
   ]);
-  for (const definition of tools.defs.values()) {
+  for (const definition of ctx.tools.defs.values()) {
     if (!definition.name.startsWith('mcp_manager_')) continue;
     checkSchema(definition.parameters ?? { type: 'object' }, `${definition.name}.parameters`);
-    assert.ok(definition.output, `${definition.name} needs output`);
     checkSchema(definition.output.schema, `${definition.name}.output.schema`);
     assert.equal(typeof definition.output.render, 'function');
     assert.equal(typeof definition.execute, 'function');
   }
 });
 
-test('tool round trip: list → inspect → set_enabled → export', async () => {
-  const tools = new FakeTools();
-  const { ctx } = makeCtx({
-    tools,
-    entries: [{ id: 'mcp-alpha', config: { serverName: 'alpha', transport: 'streamable-http', url: 'https://a.example/mcp' } }],
-  });
-  apply(ctx, { webApi: false });
+test('tool round trip: add → list → probe → export → remove', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  registerTools(ctx, manager);
+  const tool = (name) => ctx.tools.defs.get(name);
 
-  const listed = await tools.defs.get('mcp_manager_list').execute({ verbose: true });
+  const added = await tool('mcp_manager_add').execute({ serverName: 'rt', transport: 'stdio', command: process.execPath, args: [STUB] });
+  assert.equal(added.ok, true);
+  assert.equal(added.toolCount, 2);
+
+  const listed = await tool('mcp_manager_list').execute({ verbose: true });
   assert.equal(listed.servers.length, 1);
   assert.deepEqual(listed.servers[0].tools, ['echo', 'ping']);
 
-  const inspected = await tools.defs.get('mcp_manager_inspect').execute({ server: 'alph' });
-  assert.equal(inspected.server.serverName, 'alpha');
-  assert.equal(inspected.tools.length, 2);
+  const probed = await tool('mcp_manager_probe').execute({ server: 'rt' });
+  assert.equal(probed.reachable, true);
+  assert.equal(probed.toolCount, 2);
 
-  const disabled = await tools.defs.get('mcp_manager_set_enabled').execute({ server: 'alpha', enabled: false });
-  assert.equal(disabled.changed, true);
-  assert.equal(disabled.status, 'disabled');
+  const exported = await tool('mcp_manager_export').execute({ format: 'json' });
+  assert.match(exported.content, /"rt"/);
 
-  const exported = await tools.defs.get('mcp_manager_export').execute({});
-  assert.match(exported.yaml, /serverName: alpha/);
+  const removed = await tool('mcp_manager_remove').execute({ server: 'rt' });
+  assert.equal(removed.removed, true);
+  assert.equal((await tool('mcp_manager_list').execute({})).servers.length, 0);
+});
+
+test('plugin config normalization keeps defaults', () => {
+  assert.deepEqual(normalizePluginConfig(undefined), { webApi: true, includeDescriptions: true, storePath: undefined });
+  assert.deepEqual(normalizePluginConfig({ webApi: false, includeDescriptions: false, storePath: '/tmp/x.json' }), { webApi: false, includeDescriptions: false, storePath: '/tmp/x.json' });
 });

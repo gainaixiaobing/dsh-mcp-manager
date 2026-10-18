@@ -1,35 +1,36 @@
 # dsh-mcp-manager
 
-> 一个**轻量版 MCP 服务管理器**：管理本机已经接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 MCP 服务。
-> 对照 `dsh-mcp-connector`（插件市场 + 远程目录 + OAuth 授权 + 安装分发）重新实现的最小版本——
-> 不做"连接器市场"，只管理**已有的** MCP 服务。
+> 一个**轻量版 MCP 服务管理器**：管理本机已经接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 MCP 服务，
+> 并能从 Claude Desktop / Cursor / VS Code 等客户端扫描、导入配置。
+> 不做插件市场、不做远程目录、不做 OAuth 授权流——只把「本机 MCP」管好。
 
-A lightweight MCP server manager for DeepSeek Harness (DSH): inspect, enable/disable, add, remove,
-and export the MCP servers already configured in a DSH profile. No marketplace, no OAuth
-authorization flow, no remote catalog — just the local inventory.
+A lightweight MCP server manager for DeepSeek Harness (DSH): inspect, enable/disable, add, edit, remove,
+probe, import from and export to the common `mcpServers` JSON convention. Zero npm dependencies.
 
 ## 它做什么
 
 | 能力 | 入口 | 说明 |
 | --- | --- | --- |
-| 列出全部 MCP 服务 | `mcp_manager_list` / 设置页 | 服务名、来源（profile 声明 / 插件动态接入）、传输方式、端点（已脱敏）、状态、当前可用工具数 |
-| 查看单个服务与工具 | `mcp_manager_inspect` / 设置页展开 | 工具名 + 说明；状态区分「已连接 / 已停用 / 无工具 / 加载失败」 |
-| 启用 / 停用 | `mcp_manager_set_enabled` / 设置页开关 | 走 `ctx.loader.update`，立即断开/重建连接并增删 `mcp__<server>__*` 工具 |
-| 运行时接入新服务 | `mcp_manager_add` | `streamable-http` / `stdio`；同名服务则更新配置 |
-| 运行时移除服务 | `mcp_manager_remove` | 只是移除运行时条目，不改 profile 文件 |
-| 导出为持久化配置 | `mcp_manager_export` | 生成可并入 `cordis.patch.yml` 的 YAML；凭据自动脱敏成 `!!js process.env.*` |
-| 图形界面 | DSH 设置页 →「MCP 服务」 | 列表 / 状态 / 工具数 / 工具展开 / 启停开关 / 刷新 |
+| 列出 MCP 服务 | `mcp_manager_list` / 设置页 | 来源（profile / 受管）、状态、传输、端点（脱敏）、工具数；支持关键词/状态过滤 |
+| 查看详情与工具 | `mcp_manager_inspect` / 设置页展开 | 工具名 + 说明；状态区分「已连接 / 已停用 / 无工具 / 加载失败 / 未生效」 |
+| 启用 / 停用 | `mcp_manager_set_enabled` / 开关 | 受管服务**持久化**；profile 静态行只改本次运行 |
+| 接入新服务 | `mcp_manager_add` / 新增表单 | `streamable-http` 或 `stdio`；默认写入受管存储，重启自动恢复 |
+| 编辑已有服务 | `mcp_manager_update` / 编辑表单 | URL / headers / command / args / env / cwd / 超时；密钥三态（保留/覆盖/删除） |
+| 移除服务 | `mcp_manager_remove` / 删除按钮 | 受管：删记录+条目；profile：仅本次运行 |
+| **握手探针** | `mcp_manager_probe` / 探针按钮 | 真实 initialize + tools/list：延迟、协议版本、工具数、结构化错误码、stderr（已脱敏） |
+| **扫描本机配置** | `mcp_manager_scan` / 导入向导 | Claude Desktop / Claude Code / Cursor / Windsurf / VS Code / Cline / Zed / Continue |
+| **导入 `mcpServers` JSON** | `mcp_manager_import` / 粘贴 JSON | 先预览（新增/冲突）再写；冲突支持跳过/覆盖受管/自动改名；可导入为停用 |
+| **导出** | `mcp_manager_export` / 导出面板 | `patch`（cordis.patch.yml，`!!js process.env.*`）/ `json`（`mcpServers`，`${ENV}`）/ `markdown` 清单 |
 
-## 为什么再写一个
+## 持久化怎么工作
 
-| | `dsh-mcp-connector` | `dsh-mcp-manager` |
-| --- | --- | --- |
-| 定位 | 连接器市场（发现、安装、OAuth 授权、分发） | 本机已接入服务的日常管理 |
-| 数据来源 | 自带连接记录表 + 远程 catalog | 直接读 Harness 运行时（loader 条目 + 工具注册表） |
-| 新增服务 | 目录挑选 / OAuth / 导入 JSON | 直接给 `serverName + transport + url/command` |
-| 存储 | 自己的 storage 表（连接、grant、快照、治理） | 不落盘；运行时生效，持久化交给 `mcp_manager_export` |
-| 工具数量 | 约 20 个 `mcp_connector_*` | 6 个 `mcp_manager_*` |
-| 外部依赖 | catalog URL、OAuth、HTTP 探活 | 无网络依赖，零 npm 依赖 |
+- **profile 静态声明**（`cordis.patch.yml` 里的 `@deepseek-ai/dsh-mcp-client` 行）保持只读：
+  启停/编辑只影响本次运行，重启恢复；需要持久化就导出 patch。
+- **本插件受管的连接**写入：
+  `<DSH_HOME>/mcp-manager/connections-<profile>.json`（默认 `~/.dsh/mcp-manager/`）。
+  启动时由插件自动 `ctx.loader.create/update` 成 `dsh-mcp-client` 条目，因此重启后仍在。
+  - 文件权限 0600、目录 0700；原子写（tmp + rename）；每次覆盖前留一份 `.bak`；
+  - 写操作串行化（同一进程内），JSON 损坏时**不覆盖原文件**、只在 UI/工具里报错。
 
 ## 安装
 
@@ -52,99 +53,97 @@ dsh plugin --profile <profile> add github:gainaixiaobing/dsh-mcp-manager
 ```bash
 git clone https://github.com/gainaixiaobing/dsh-mcp-manager.git
 cd dsh-mcp-manager
-
-# 默认装到桌面 profile；也可传入其它 profile 目录（如 ~/.dsh/profiles/web）
-./install.sh
+./install.sh                 # 默认桌面 profile
 ./install.sh ~/.dsh/profiles/web
 ```
-
-`install.sh` 只做两件事（幂等，会先备份 `package.json`）：
-
-1. 复制本目录到 `<profile>/node_modules/dsh-mcp-manager`；
-2. 在 `<profile>/package.json` 的 `dsh.profile.bundles` 末尾登记 `dsh-mcp-manager`。
-
-**不修改** profile 的 `cordis.patch.yml`、不改依赖版本、不跑 pnpm：插件行由 bundle 自带的
-`cordis.patch.yml` 在合成 profile 时插入。
 
 装好后重启 DeepSeek Harness。Host 半区需要重启；Client 半区在有 `dsh-client-hmr` 的发行版里会热替换。
 
 ## 使用
 
-- 设置 → **MCP 服务**：每行一个服务，右侧开关启停，点「查看工具」展开工具；
-- 或直接在对话里说：「列出我的 MCP 服务」「停用 fuyao-fund」「把 github 重新启用」「导出当前 MCP 配置」。
-
-> 启停、增删、改配置都是**运行时**生效：重启 Harness 后恢复 `cordis.patch.yml` 里的声明。
-> 这是刻意设计——管理插件不应该偷偷改写你的 profile。需要持久化时调用 `mcp_manager_export`，
-> 把输出的 YAML 片段粘贴进 profile 的 `cordis.patch.yml`。
+- 设置 → **MCP 服务**：搜索/状态筛选，逐行启停、探针、编辑、删除；顶部「新增 / 导入 / 导出」；
+- 对话里也可以直接说：「列出我的 MCP 服务」「探测 qcc-company 通的吗」「把 Cursor 里的 MCP 配置导入进来」
+  「把当前配置导出成 patch」。
 
 ## 架构
 
 ```
 ┌──────────────────────── Harness 运行时 ────────────────────────┐
-│  ctx.loader.entries() ──► 找出 name === '@deepseek-ai/dsh-mcp-client' 的条目
-│        │                     （profile 静态行 + 其他插件动态 provision 的行）
-│        ├─ fiber.config ──► serverName / transport / url / command（凭据不回显）
-│        └─ entry.disabled ─► 启停状态
-│  ctx.tools.schemas() ────► 按 mcp__<serverName>__ 前缀统计工具数/工具名
-│        │
-│  ctx.loader.update/create/remove ──► 启停 / 增删（运行时）
+│  ctx.loader.entries() ──► mcp-client 条目（profile 行 + 受管行）      │
+│  ctx.tools.schemas()  ──► mcp__<server>__* 工具，决定「已连接/工具数」 │
+│  ctx.loader.update/create/remove ──► 启停 / 增删 / 编辑（运行时）    │
 └────────────────────────────────────────────────────────────────┘
-        ▲ 对话工具（6 个 mcp_manager_*）
-        ▲ 同源 HTTP：GET /mcp-manager/api/state、POST /mcp-manager/api/action
-                     ▲ 回环 + Origin/Host 同源 fence；无凭据返回
+        ▲ 10 个对话工具 mcp_manager_*
+        ▲ 同源 HTTP：/mcp-manager/api/state、/mcp-manager/api/action（回环 + 同源 fence）
         │
 ┌───────┴──────── Web UI（设置页 settings.section）──────────────┐
-│  列表 / 状态 / 工具数 / 工具展开 / 启停开关 / 刷新              │
+│ 列表 / 状态 chips / 搜索 / 探针 / 编辑 / 导入 / 导出 / 启停      │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-设计要点：
+代码结构（零 npm 依赖，只用 node 内建模块）：
 
-- **零依赖**：`index.js` 不 import 任何包（连 `@deepseek-ai/dsh-tools` 也不 import），
-  `client.js` 只 `require('react')`，避免第三方插件在 profile 里的模块解析风险；
-- **不落盘**：没有自己的 storage，不复制凭据，不写 profile 文件；
-- **不猜主体**：服务名解析支持精确名 / 条目 id / 唯一子串，多候选时直接报错让人选；
-- **脱敏**：端点去掉 query/hash；stdio 只显示可执行文件名；导出时 headers/env 里的
-  `Authorization / token / key / secret / password / cookie ...` 一律替换成
-  `!!js process.env.<占位符>`。
+| 文件 | 职责 |
+| --- | --- |
+| `lib/index.js` | 插件入口 + manager 门面（list/add/update/remove/setEnabled/probe/scan/import/export） |
+| `lib/store.js` | 受管连接存储（0600 / 原子写 / `.bak` / 串行 mutate） |
+| `lib/config.js` | record 规范化、`mcpServers` JSON 互转 |
+| `lib/inventory.js` | loader 条目 + 工具注册表 → 服务清单、状态判定 |
+| `lib/provision.js` | 受管 record → `dsh-mcp-client` 条目（create/update/remove） |
+| `lib/probe.js` | MCP 握手探针（streamable-http / stdio、错误分类） |
+| `lib/importers.js` | 8 类客户端配置扫描、JSONC 解析、mcpServers 解析 |
+| `lib/export.js` | patch / mcpServers JSON / Markdown 导出 |
+| `lib/sanitize.js` | 统一脱敏出口（Bearer/JWT/URL/query/KEY=value/x-api-key…） |
+| `lib/tools.js` / `lib/web.js` | 对话工具与同源 HTTP API |
 
-## 插件配置（`cordis.patch.yml` 里的 `config`）
+### 状态语义
 
-```yaml
-- insert:
-    - id: mcp-manager
-      name: 'dsh-mcp-manager'
-      config:
-        webApi: true               # 是否挂载 /mcp-manager/api（设置页需要；默认 true）
-        includeDescriptions: true  # 工具清单里是否带工具说明（默认 true）
-```
+| 状态 | 判定 |
+| --- | --- |
+| 已连接 | 条目已启用、已有 fiber、命名空间下有工具 |
+| 无工具 | 已启用且有 fiber，但工具数为 0（服务本身不提供，或连接失败被 mcp-client 吞掉） |
+| 加载失败 | 已启用但没有 fiber（apply 抛错，常见于 serverName 重复声明） |
+| 未生效 | 受管记录存在，但本次启动没有成功创建 loader 条目 |
+| 已停用 | 条目 `disabled: true` |
 
-## 状态判定与两个常见坑
+同名重复（profile 行 + 受管记录共用一个 `serverName`）会在列表里打「同名」标记；
+解析时拒绝猜测，要求传条目 id；导入时按冲突策略处理。
 
-| 状态 | 判定 | 含义 |
-| --- | --- | --- |
-| 已连接 | 条目已启用且存在 fiber，命名空间下有工具 | 正常 |
-| 已停用 | `entry.disabled === true` | 被人为停用 |
-| 无工具 | 条目已启用且有 fiber，但命名空间下 0 个工具 | 服务本身不提供工具，或工具名冲突被拒 |
-| 加载失败 | 条目已启用但**没有 fiber** | apply 抛错，最常见原因是 serverName 与另一条目重复 |
+## 安全边界
 
-**同名重复**：profile 静态声明的行（条目 id 形如 `include:mcp-xxx`）和其他插件动态
-provision 的行（形如 `mcp-xxx-xxx`）可能声明同一个 `serverName`。`dsh-mcp-client` 会拒绝
-重复命名空间，**后加载的条目会「加载失败」**，但两者共用 `mcp__<server>__` 工具命名空间，
-所以工具只统计一份。列表里会给这类服务打「同名」标记；`mcp_manager_set_enabled` /
-`inspect` 遇到同名会拒绝猜测，要求传**条目 id**（如 `include:mcp-amap` 或
-`mcp-amap-amap`）。导出时会按 serverName 去重并提示。
+- 凭据只进受管存储（0600）或由用户自己放在 `~/.dsh/.env` 里，导出/扫描/列表**不回显**值；
+- 所有对外文本（探针 error/stderr、异常）统一过 `sanitize.js`；
+- HTTP API 只接受本机回环 Host、校验 Origin 同源；
+- 探针 stdio 子进程会清洗父进程环境中的凭据名（KEY/PASSWORD/SECRET/TOKEN、`DSH_*`）；
+- 扫描只读其它客户端配置，不写回、不修改。
+
+## 设计参考（GitHub 调研）
+
+实现前调研了 DSH 生态 10 个 MCP 面板与 8 个通用 MCP 管理器，取其长：
+
+| 借鉴点 | 来源项目 |
+| --- | --- |
+| 自管存储 + `loader.create/update` 运行时挂载（不碰用户配置文件） | hyqhyq3/dsh-mcp-manager、null119/dsh-mcp-manage、ArvinQi/dsh-mcp |
+| 受管连接持久化、编辑/删除闭环 | 同上 + functy23/dsh-mcp-studio |
+| 导入前 plan（新增/冲突）+ 冲突策略 | modelcontextprotocol/inspector（planImport） |
+| `mcpServers` 多形态解析、JSONC、跨客户端互操作 | milisp/mcp-linker、ravitemer/mcphub.nvim |
+| 探针结构化诊断（延迟/协议/错误码/stderr） | PerryLink/dsh-mcp-panel、milisp/mcp-linker |
+| 密钥三态语义（缺省=保留 / null=删除 / 值=覆盖） | Fishquito7/dsh-skill-mcp-panel |
+| 统一脱敏出口 | PerryLink/dsh-mcp-panel |
+| 状态 chips、工具名搜索、诊断复制 | Js2Hou/dsh-mcp-manager、hyqhyq3/dsh-mcp-manager |
+
+> 只借鉴设计思路，未复制代码；所有实现为本仓库独立编写。
 
 ## 开发与测试
 
 ```bash
 node --check index.js && node --check client.js
-node --test test/host.test.mjs    # Host 半区：枚举/解析/启停/增删/导出 + schema 子集校验
-node --test test/client.test.mjs  # Client 半区：模块注册、槽位注册、三种状态的渲染与开关交互
+node --test test/host.test.mjs    # 22 个：存储/清单/导入导出/探针/脱敏/schema
+node --test test/client.test.mjs  # 7 个：模块注册、槽位、渲染、启停、探针、面板
+npm test                          # 两套一起跑
 ```
 
-离线测试用假 `ctx`（loader / tools）和最小 React 渲染器，不需要启动 Harness。
-端到端验证方式见 [`test/README.md`](test/README.md)。
+端到端验证方式见 [`test/README.md`](test/README.md)。GitHub Actions 在 Node 20/22/24 上跑同一套测试。
 
 ## 卸载
 
@@ -153,17 +152,15 @@ node --test test/client.test.mjs  # Client 半区：模块注册、槽位注册�
 ./uninstall.sh ~/.dsh/profiles/web
 ```
 
-会从 bundles 列表移除 `dsh-mcp-manager` 并删除 `<profile>/node_modules/dsh-mcp-manager`，随后重启应用。
-通过面板或 CLI 安装的，直接在面板里停用/卸载即可。
+通过面板/CLI 安装的，直接在面板里停用/卸载。受管存储文件不会被自动删除（如需清理由你手动删）。
 
 ## 限制
 
-- 状态里的「已连接」只代表工具已注册，不代表服务端一定能应答（Harness 没向插件暴露连接诊断）；
-- 加载失败的条目能看到，但插件拿不到失败原因（错误只进日志）；
-- 不做 OAuth：需要 OAuth 的服务请用 `dsh-mcp-connector`，或自己拿到 token 后用
-  `mcp_manager_add` 的 `headers` 传 `Authorization`；
-- 启停/增删不持久化（见上文），持久化用 `mcp_manager_export`；
-- 设置页导航图标由宿主固定映射，第三方插件显示为齿轮图标。
+- 状态里的「已连接」= 工具已注册，不代表服务端业务可用；探针才是真实握手（但不会调用业务工具）；
+- 探针 tools/list 只取第一页（不翻 cursor），工具数特别多的服务可能少算；
+- 不做 OAuth 授权流：需要 OAuth 的服务请自行获取 token 后用 `headers`/`env` 传入；
+- 受管存储是明文 JSON（0600 权限），与 `~/.dsh/.env` 同级信任模型；不要把它提交进 git；
+- 不做 profile 文件写入器：持久化统一走「导出 patch + 手动合并」，避免插件替用户改配置。
 
 ## License
 
