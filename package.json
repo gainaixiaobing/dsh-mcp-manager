@@ -1,0 +1,59 @@
+{
+  "name": "dsh-mcp-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "轻量级本机 MCP 服务管理器：查看、启停、增删、导出已接入 DeepSeek Harness 的 MCP 服务，不含插件市场与 OAuth 授权。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "mcp",
+    "mcp-manager",
+    "mcp-inventory"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "gainaixiaobing",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gainaixiaobing/dsh-mcp-manager.git"
+  },
+  "homepage": "https://github.com/gainaixiaobing/dsh-mcp-manager#readme",
+  "bugs": {
+    "url": "https://github.com/gainaixiaobing/dsh-mcp-manager/issues"
+  },
+  "scripts": {
+    "test": "node --test test/host.test.mjs test/client.test.mjs"
+  }
+}

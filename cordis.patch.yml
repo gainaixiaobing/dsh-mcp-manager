@@ -1,0 +1,12 @@
+# dsh-mcp-manager 插件（DSH Bundle patch）
+# 作为 bundle 被合入 profile 时，自动插入本插件行。
+# 只管理「本机已接入」的 MCP 服务（@deepseek-ai/dsh-mcp-client 条目），
+# 不包含插件市场、远程目录、OAuth 授权等连接器能力。
+- insert:
+    - id: mcp-manager
+      name: 'dsh-mcp-manager'
+      config:
+        # 是否挂载同源只读 HTTP API（/mcp-manager/api），供设置页使用。
+        webApi: true
+        # 工具清单里是否附带工具描述（false 可让列表更精简）。
+        includeDescriptions: true
