@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.2] — 2026-11-03
+
+### Fixed
+
+- **设置左侧导航显示 `nav.label`（以及面板内大量 `xxx.yyy` 原始 key）**：DSH 的 locale 服务是
+  扁平 key 查表（`t('a.b')` 直接取 `dict['a.b']`），不会按 `.` 遍历嵌套对象；本插件此前注册的是
+  嵌套字典，所以只有根级 key（如 `title`）能命中。现在注册前把 zh/en 字典压平，
+  导航显示「MCP 服务」，面板内 `status.* / column.* / form.* / importer.* / exporter.* /
+  health.* / apps.* / drawer.*` 等文本全部正常。
+- client 测试的 locale mock 改为与真实服务一致的扁平查表，并加回归断言（字典值必须全为字符串、
+  `nav.label` 必须命中），以后不会再漏。
+
 ## [0.4.1] — 2026-11-03
 
 ### Fixed

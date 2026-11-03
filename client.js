@@ -22,6 +22,23 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
 
+    /**
+     * DSH locale 服务是「扁平 key 查表」：`t('a.b')` 直接取 `dict['a.b']`，
+     * 不会按 `.` 遍历嵌套对象。这里把嵌套字典压平，避免出现 `nav.label` 这种原始 key。
+     */
+    function flattenDictionary(input, prefix = '') {
+      const out = {};
+      for (const [key, value] of Object.entries(input ?? {})) {
+        const full = prefix === '' ? key : `${prefix}.${key}`;
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+          Object.assign(out, flattenDictionary(value, full));
+        } else {
+          out[full] = String(value);
+        }
+      }
+      return out;
+    }
+
     const NS = 'mcp-manager';
     const API_STATE = '/mcp-manager/api/state';
     const API_ACTION = '/mcp-manager/api/action';
@@ -2439,7 +2456,9 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-mcp-manager: dictionaries');
+        const flatZh = flattenDictionary(zh);
+        const flatEn = flattenDictionary(en);
+        ctx.effect(() => ctx.locale.register(NS, { zh: flatZh, en: flatEn }), 'dsh-mcp-manager: dictionaries');
         const t = ctx.locale.bind(NS);
         const Section = (props) => h(McpManagerSection, { ...props, t: props?.t ?? t });
         ctx.slots.inject('settings.section', () => ctx.slots.register({

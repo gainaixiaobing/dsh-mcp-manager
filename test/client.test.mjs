@@ -208,9 +208,14 @@ function makePlugin() {
         dictionaries.set(namespace, dict);
         return () => {};
       },
+      // 真实 locale 服务是扁平查表（不按 . 遍历）：这里保持同样的语义，才能抓到嵌套字典的 bug
       bind(namespace) {
-        const dict = dictionaries.get(namespace)?.zh ?? {};
-        return (key) => key.split('.').reduce((node, part) => node?.[part], dict) ?? key;
+        const bundles = dictionaries.get(namespace);
+        return (key, params) => {
+          const template = bundles?.zh?.[key] ?? bundles?.en?.[key] ?? key;
+          if (typeof template !== 'string' || params === undefined) return template;
+          return template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match));
+        };
       },
     },
     slots: {
@@ -336,8 +341,13 @@ test('apply registers one settings.section entry with nav label and locale', () 
   assert.equal(options.name, 'settings.section');
   assert.equal(options.id, 'mcp-manager');
   assert.equal(options.label(), 'MCP 服务');
-  assert.ok(dictionaries.get('mcp-manager').zh.form.addTitle);
-  assert.ok(dictionaries.get('mcp-manager').zh.tools.center);
+  const bundles = dictionaries.get('mcp-manager');
+  assert.ok(bundles.zh['form.addTitle']);
+  assert.ok(bundles.zh['tools.center']);
+  // 回归：字典必须是扁平 key（DSH locale 不按 '.' 遍历嵌套对象，曾导致导航显示 "nav.label"）
+  assert.equal(bundles.zh['nav.label'], 'MCP 服务');
+  for (const value of Object.values(bundles.zh)) assert.equal(typeof value, 'string');
+  for (const value of Object.values(bundles.en)) assert.equal(typeof value, 'string');
 });
 
 test('renders the server table with source/status/tool counts and store path', async () => {
