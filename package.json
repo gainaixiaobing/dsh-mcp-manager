@@ -1,8 +1,8 @@
 {
   "name": "dsh-mcp-manager",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "轻量级 MCP 服务管理器：查看/启停/增删/导入导出/握手探针，管理 DeepSeek Harness 已接入与本机其它客户端的 MCP 服务。",
+  "description": "轻量级 MCP 服务管理器：服务清单/启停/增删/导入导出、握手探针与历史、工具浏览与在线试用、收藏标签；管理 DeepSeek Harness 已接入与本机其它客户端的 MCP 服务。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -58,6 +58,6 @@
     "url": "https://github.com/gainaixiaobing/dsh-mcp-manager/issues"
   },
   "scripts": {
-    "test": "node --test test/host.test.mjs test/client.test.mjs"
+    "test": "node --test test/host.test.mjs test/web.test.mjs test/client.test.mjs"
   }
 }

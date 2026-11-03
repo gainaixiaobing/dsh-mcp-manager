@@ -1,5 +1,85 @@
 # Changelog
 
+## [0.3.0] — 2026-11-03
+
+从「配置管理器」升级为「MCP 调试台 + 健康看板」：工具可浏览、可在线试用；
+探针有历史、能批量跑；服务能收藏/打标签；同时修掉了一轮外部审计发现的
+2 个 P0 与 9 个 P1（安装脚本、导出、脱敏、HTTP 鉴权、UI 同名操作等）。
+
+### Added
+
+- **工具浏览与在线试用**：
+  - `mcp_manager_tools` 跨服务搜索工具（可按服务过滤，可选附带参数 JSON Schema）；
+  - `mcp_manager_call_tool` 真实调用一个 MCP 工具（走宿主 `ctx.tools.execute` 同一执行管线，
+    不绕过 guard/审批），支持 `dryRun` 预检、超时（1–120s）、参数/结果体积上限与截断标记；
+  - 设置页新增「工具中心」与工具抽屉：schema 查看、示例参数、JSON 参数编辑、执行与结果展示。
+- **探针历史与健康看板**：
+  - 探针结果写入偏好存储（每服务最近 20 次：时间/成功/延迟/工具数/错误码）；
+  - `mcp_manager_probe_many` 批量探测（默认全部已启用服务，并发 1–8）；
+  - 设置页顶部健康条：状态计数、最近探针成功率、「全部探测」、自动探测开关（`ui.autoProbe`）。
+- **收藏 / 标签 / 备注**：`mcp_manager_prefs` + 面板星标与标签，按 `serverName` 持久化
+  （profile 静态行也适用），存放在 `prefs-<profile>.json`（0600、原子写、`.bak`、串行写）。
+- **高级配置**：编辑表单可改 `reconnect`（enabled/initialDelayMs/maxDelayMs/maxAttempts）、
+  `failOnStartupError`、`maxInstructionBytes`；`reconnect` 支持浅合并。
+- **诊断报告**：`mcp_manager_export format=diagnostics` / 面板导出「诊断报告」：
+  状态汇总 + 问题清单（失败/无工具/未生效/同名/最近探针失败）+ 探针历史，不含凭据。
+- **静态凭据风险提示**：服务对象新增 `riskFlags`（`url-secret` / `header-secret` / `env-secret` /
+  `args-secret` / `shell-args`），只看配置、不发请求。
+- **多服务导出**：`export` 支持 `servers: string[]` 只导出选中服务。
+- **存储修复**：`mcp_manager_store_repair` + `POST action=repairStore`：损坏的受管存储可改名备份
+  （`.corrupt-<时间戳>`）后重置，不用手动删文件。
+- **UI**：编辑面板高级项、导入面板支持从扫描到的文件路径导入、导出面板支持 diagnostics /
+  patch 范围（仅受管 / 含 profile 行）、探针失败诊断复制、同名条目改用条目 id 操作。
+
+### Changed
+
+- **patch 导出的持久化语义修正（P0）**：默认**只导受管记录**——profile 静态行已经在
+  `cordis.patch.yml` 里，再 `- insert:` 会重复 loader id 导致下次启动 fail-loud；
+  需要时传 `includeProfile=true`，profile 行会以「按 id 覆盖」的片段导出并给出提示。
+- `export` 工具在对话里**强制脱敏**（避免明文凭据进入模型上下文）；设置页 web API 仍可显式
+  `redact:false`。
+- 新上线的 HTTP API 需要 `x-mcp-manager-token`（进程级随机 token，由 host 注入页面 bootstrap）：
+  挡住「本机任意进程直接 curl 改配置」；token 只经 index 注入，不下发凭据。
+- `mcp_manager_import` 的 `file` 只接受**本会话 `scan()` 发现过的配置文件路径**，不再读任意路径。
+- `GET /state` 不再返回每个服务的工具说明大字段（实测从 ~186KB 降到只含 `toolNames`），
+  需要的工具 schema 走 `tools` / `toolDetail` 按需取。
+- 受管/运行时条目区分：`persist:false` 接入的条目带 `runtimeOnly: true`，按「仅本次运行」处理；
+  profile 与受管记录同名时两条都会列出并标 `duplicate`（此前 profile 行会被误标成受管）。
+- 探针返回统一补 `serverNameRemote`、`history`；`state.toolCount` 改用 summary（此前恒为 0）。
+
+### Fixed
+
+- **安装脚本（P0）**：`install.sh` 现在会复制 `lib/` 与 `test/fixtures/`，安装后执行
+  `import('index.js')` 自检，失败自动回滚 `package.json`（此前方式三安装完直接 `ERR_MODULE_NOT_FOUND`）。
+- **stdio 探针定时器泄漏**：每次 RPC 成功/结束都会清理定时器并 reject 挂起请求；
+  整套测试从 ~10.2s 降到 ~5s，探针进程不再拖 10s 才退出。
+- **脱敏补洞（P1）**：
+  - 导出会对 URL query 凭据、stdio `--token` 类参数、以及「值形状像凭据」的 header/env 值生成
+    `${ENV}` 占位符并写进 warnings；
+  - `sanitize.js` 覆盖 `Basic`/`Digest`/`ApiKey`/整段 `Authorization`、`--token` 参数、
+    `*PAT/*COOKIE/*AUTH` 变量名；
+  - `config` 编辑视图里的 URL 凭据会被掩码（`urlMasked`），提交空 URL 表示保持原值；
+  - import 预览的 endpoint 统一走 `endpointOf()`（不再回显 URL query 原文）；
+  - 解析 JSON 的错误只给「第 N 字节/行附近」，不回显原文片段。
+- **YAML 导出合法性**：key 一律做引号/保留字处理、多行值用 `|-` 块标量、数字样字符串加引号
+  （此前 `X: INJECTED`、PEM 多行值、`@reserved` 会产出非法或被静默改值的 YAML）。
+- **浏览器/本机请求边界**：IPv6 回环 `[::1]` 不再误判 403；`Sec-Fetch-Site`/Origin 同源校验保留。
+- **JSONC 导入**：粘贴路径也支持注释与尾逗号；尾逗号改由状态机处理，
+  不再误伤字符串里的 `",}"`（此前会静默改 URL/args）。
+- **存储元数据**：`createdAt` / `updatedAt` 不再在重启后丢失。
+- **remove 语义**：受管记录被删除即 `removed: true`（另给 `entryRemoved` 表示条目是否本来存在），
+  不再出现「提示没删掉、实际已删除」。
+- **stdio 探针环境清洗**：除 `KEY/PASSWORD/SECRET/TOKEN` 外，补充 `PAT/AUTH/COOKIE/CREDENTIAL`
+  与 `*_URL / *_URI / *_DSN`（连接串常带密码）；HTTP 探针失败不再回显响应体（降低受限 SSRF 信息面）。
+- 存储临时文件名改用 `basename()`，兼容 Windows 路径。
+
+### Tests
+
+- 新增 `test/web.test.mjs`（token 鉴权、回环/Origin/IPv6、action 白名单、state 体积）；
+- host 测试新增：偏好存储、工具目录/试用、高级配置、探针历史/诊断、批量探针、多服务导出、
+  patch 默认范围、URL 掩码、导入文件白名单、导出脱敏、YAML 合法性、state 字段、remove 语义、
+  存储修复；`npm test` 覆盖 host + web + client 三套。
+
 ## [0.2.0] — 2026-10-18
 
 参考 GitHub 上 10 个同类项目（DSH 生态 MCP 面板 + 通用 MCP 管理器）重做的一版：
