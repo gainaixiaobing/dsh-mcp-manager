@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1] — 2026-11-03
+
+### Fixed
+
+- 内置应用目录新增「📕 小红书」（`xiaohongshu` / `xhs` / `redbook`、`xiaohongshu.com`）：
+  此前受管接入的 `xiaohongshu` 服务会直接显示成 serverName，而不是应用名。
+- 测试隔离：host 测试把 `DSH_HOME` 指向临时目录，不再写用户真实偏好文件
+  （v0.4.0 测试期间曾把 `rt` / `conv-srv` 写进 `~/.dsh/mcp-manager/prefs-<profile>.json`；
+  本机已清理，用户收藏/标签/备注不受影响）。
+
 ## [0.4.0] — 2026-11-03
 
 按「应用」归类：多个 MCP 服务聚合成一张卡（高德地图 / 同花顺 / 企查查 / 北大法宝…），

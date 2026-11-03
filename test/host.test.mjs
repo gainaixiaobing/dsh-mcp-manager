@@ -21,6 +21,9 @@ import { probeRecord, probeStdio } from '../lib/probe.js';
 import { PrefsStore } from '../lib/prefs.js';
 import { detectApp } from '../lib/apps.js';
 
+// 隔离默认存储/偏好路径：测试绝不能写用户的 ~/.dsh/mcp-manager（曾污染过 prefs-desktop.json）
+process.env.DSH_HOME = await mkdtemp(join(tmpdir(), 'mcp-manager-test-home-'));
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STUB = join(HERE, 'fixtures', 'stub-mcp.mjs');
 const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client';
@@ -984,6 +987,8 @@ test('detectApp matches catalog, host, prefix, manual override and singleton fal
   assert.equal(hostApp.id, 'host:example.com');
   assert.equal(hostApp.name, 'example.com');
   assert.equal(detectApp({ serverName: 'mystery-svc', siblings: ['other-svc'] }).source, 'self');
+  assert.equal(detectApp({ serverName: 'xiaohongshu' }).id, 'xiaohongshu');
+  assert.equal(detectApp({ serverName: 'xiaohongshu' }).name, '小红书');
   assert.equal(detectApp({ serverName: 'x', manual: '同花顺' }).id, 'fuyao');
   assert.equal(detectApp({ serverName: 'x', manual: '我的内网工具' }).id, 'manual:我的内网工具');
 });
