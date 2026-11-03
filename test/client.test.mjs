@@ -76,12 +76,21 @@ const React = {
 /** 递归执行函数组件，返回"渲染后的元素树"（保留宿主标签及其 props）。 */
 function renderNode(node, path) {
   if (node === null || node === undefined || node === false) return null;
-  if (Array.isArray(node)) return node.map((child, index) => renderNode(child, `${path}[${index}]`));
+  if (Array.isArray(node)) {
+    return node.map((child, index) => {
+      const key = child !== null && typeof child === 'object' && !Array.isArray(child) && child.props?.key !== undefined
+        ? child.props.key
+        : index;
+      return renderNode(child, `${path}[${key}]`);
+    });
+  }
   if (typeof node === 'string' || typeof node === 'number') return node;
   const { type, props } = node;
   if (typeof type === 'function') {
-    const store = hookStores.get(path) ?? { hooks: [], cursor: 0, effects: [] };
-    hookStores.set(path, store);
+    // 组件身份用「路径 + 组件名」区分，避免条件渲染导致兄弟索引变化时串用 hook 状态。
+    const storeKey = `${path}/${type.name || 'component'}`;
+    const store = hookStores.get(storeKey) ?? { hooks: [], cursor: 0, effects: [] };
+    hookStores.set(storeKey, store);
     store.cursor = 0;
     store.effects = [];
     const previous = currentStore;
@@ -96,7 +105,7 @@ function renderNode(node, path) {
       const cleanup = effect();
       if (typeof cleanup === 'function') store.cleanups = [...(store.cleanups ?? []), cleanup];
     }
-    return renderNode(output, `${path}/${type.name || 'component'}`);
+    return renderNode(output, storeKey);
   }
   return { type, props: { ...props, children: renderNode(props?.children, `${path}#`) } };
 }
@@ -161,6 +170,19 @@ globalThis.window = {
 };
 Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async () => {} } }, configurable: true });
 
+// v0.4：视图模式记忆用 localStorage（Node 默认没有，这里补一个最小实现）
+const storage = new Map();
+Object.defineProperty(globalThis, 'localStorage', {
+  value: {
+    getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+    setItem: (key, value) => { storage.set(key, String(value)); },
+    removeItem: (key) => { storage.delete(key); },
+    clear: () => storage.clear(),
+  },
+  configurable: true,
+  writable: true,
+});
+
 const source = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 new Function('window', 'require', source)(globalThis.window, (name) => {
   if (name === 'react') return React;
@@ -213,6 +235,7 @@ function makePlugin() {
 function mountSection() {
   const env = makePlugin();
   hookStores.clear();
+  storage.clear();
   const { Component } = env.registrations[0];
   const t = env.ctx.locale.bind('mcp-manager');
   const draw = () => {
@@ -227,17 +250,47 @@ const flush = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
+/** 模拟 host 的 state.apps 聚合（按 server.app 分组 + 健康计数）。 */
+function appsFor(servers) {
+  const groups = new Map();
+  for (const server of servers) {
+    const app = server.app ?? { id: `server:${server.serverName}`, name: server.serverName, source: 'self', singleton: true };
+    const group = groups.get(app.id) ?? {
+      id: app.id, name: app.name, ...(app.icon ? { icon: app.icon } : {}),
+      ...(app.vendor ? { vendor: app.vendor } : {}), source: app.source, singleton: true,
+      serverIds: [], serverNames: [], total: 0, connected: 0, failed: 0, disabled: 0,
+      noTools: 0, notProvisioned: 0, toolCount: 0, pinnedCount: 0, duplicateCount: 0,
+    };
+    group.serverIds.push(server.id);
+    group.serverNames.push(server.serverName);
+    group.total += 1;
+    group.singleton = group.total <= 1;
+    if (server.status === 'connected') group.connected += 1;
+    else if (server.status === 'failed') group.failed += 1;
+    else if (server.status === 'disabled') group.disabled += 1;
+    else if (server.status === 'no-tools') group.noTools += 1;
+    else if (server.status === 'not-provisioned') group.notProvisioned += 1;
+    if (Number.isFinite(server.toolCount)) group.toolCount += server.toolCount;
+    if (server.pinned === true) group.pinnedCount += 1;
+    if (server.duplicate === true) group.duplicateCount += 1;
+    groups.set(app.id, group);
+  }
+  return [...groups.values()].sort((left, right) => right.total - left.total || left.name.localeCompare(right.name));
+}
+
 function makeState(overrides = {}) {
   const servers = overrides.servers ?? [
     {
       id: 'include:mcp-alpha', shortId: 'mcp-alpha', origin: 'profile', serverName: 'alpha',
       transport: 'streamable-http', endpoint: 'https://a.example/mcp', enabled: true, loaded: true,
       status: 'connected', toolCount: 2, toolNames: ['echo', 'ping'], tools: [], duplicate: false,
+      app: { id: 'amap', name: '高德地图', icon: '🗺️', vendor: '高德', source: 'catalog' },
     },
     {
       id: 'mcp-manager-beta', shortId: 'mcp-manager-beta', origin: 'managed', serverName: 'beta',
       transport: 'stdio', endpoint: 'node（+1 个参数）', enabled: false, loaded: false,
       status: 'disabled', toolCount: 0, toolNames: [], tools: [], duplicate: false,
+      app: { id: 'server:beta', name: 'beta', source: 'self', singleton: true },
     },
   ];
   const summary = overrides.summary ?? {
@@ -247,6 +300,7 @@ function makeState(overrides = {}) {
   return {
     ok: true,
     servers,
+    apps: overrides.apps ?? appsFor(servers),
     summary,
     storePath: '/tmp/connections.json',
     prefsPath: '/tmp/prefs.json',
@@ -737,4 +791,244 @@ test('auto probe toggle persists ui prefs via setUiPrefs', async () => {
   await flush();
   const uiPost = posts.find((post) => post.method === 'setUiPrefs');
   assert.deepEqual(uiPost.params, { patch: { autoProbe: true } });
+});
+
+// ─── v0.4 按应用归类 ────────────────────────────────────────────────────────
+
+function fuyaoServers() {
+  const app = { id: 'fuyao', name: '同花顺', icon: '📈', vendor: '同花顺', source: 'catalog' };
+  return [
+    {
+      id: 'mcp-fuyao-a-share', shortId: 'fuyao-a-share', origin: 'managed', serverName: 'fuyao-a-share',
+      transport: 'streamable-http', endpoint: 'https://fuyao.aicubes.cn/a-share/stream', enabled: true,
+      loaded: true, status: 'connected', toolCount: 20, toolNames: ['a_share_quote'], tools: [], duplicate: false, app,
+    },
+    {
+      id: 'mcp-fuyao-fund', shortId: 'fuyao-fund', origin: 'managed', serverName: 'fuyao-fund',
+      transport: 'streamable-http', endpoint: 'https://fuyao.aicubes.cn/fund/stream', enabled: false,
+      loaded: false, status: 'disabled', toolCount: 0, toolNames: [], tools: [], duplicate: false, app,
+    },
+  ];
+}
+
+function amapServer() {
+  return {
+    id: 'include:mcp-amap', shortId: 'mcp-amap', origin: 'profile', serverName: 'amap-only',
+    transport: 'streamable-http', endpoint: 'https://maps.example/mcp', enabled: true, loaded: true,
+    status: 'connected', toolCount: 5, toolNames: ['geo'], tools: [], duplicate: false,
+    app: { id: 'amap', name: '高德地图', icon: '🗺️', vendor: '高德', source: 'catalog' },
+  };
+}
+
+function manualAppServers() {
+  const app = { id: 'manual:研究平台', name: '研究平台', icon: '🏷️', source: 'manual' };
+  return ['research-a', 'research-b'].map((name, index) => ({
+    id: `mcp-manager-${name}`, shortId: name, origin: 'managed', serverName: name,
+    transport: 'streamable-http', endpoint: `https://research.example/${index}`, enabled: true,
+    loaded: true, status: 'connected', toolCount: 3 + index, toolNames: [], tools: [], duplicate: false, app,
+  }));
+}
+
+function configViewFor(overrides = {}) {
+  return {
+    id: 'include:mcp-alpha', serverName: 'alpha', origin: 'profile', transport: 'streamable-http',
+    enabled: true, url: 'https://a.example/mcp', urlMasked: false,
+    hasHeaders: false, headerKeys: [], hasEnv: false, envKeys: [], toolCallTimeoutMs: 180000,
+    advanced: {
+      reconnect: { enabled: true, initialDelayMs: 500, maxDelayMs: 30000, maxAttempts: 10 },
+      failOnStartupError: false,
+      maxInstructionBytes: 32768,
+    },
+    ...overrides,
+  };
+}
+
+test('two services of the same app render inside one group card', async () => {
+  const state = makeState({ servers: fuyaoServers() });
+  mockFetch({ state });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  const text = textOf(draw());
+  assert.match(text, /同花顺/);
+  assert.match(text, /📈/);
+  assert.match(text, /2 个服务/);
+  assert.match(text, /1 已连接 · 0 失败 · 1 停用/);
+  assert.match(text, /fuyao-a-share/);
+  assert.match(text, /fuyao-fund/);
+  assert.doesNotMatch(text, /独立服务/);
+});
+
+test('app group collapses/expands and the flat view is remembered', async () => {
+  const state = makeState({ servers: fuyaoServers() });
+  mockFetch({ state });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  const findToggle = (current) => findAll(
+    current,
+    (node) => node.type === 'button' && node.props?.['aria-expanded'] !== undefined && textOf(node).includes('同花顺'),
+  )[0];
+
+  const toggle = findToggle(tree);
+  assert.ok(toggle);
+  assert.equal(toggle.props['aria-expanded'], true);
+  toggle.props.onClick();
+  await flush();
+  tree = draw();
+  assert.doesNotMatch(textOf(tree), /fuyao-a-share/);
+  assert.equal(findToggle(tree).props['aria-expanded'], false);
+
+  findToggle(tree).props.onClick();
+  await flush();
+  assert.match(textOf(draw()), /fuyao-a-share/);
+
+  const flatButton = buttonByText(draw(), '平铺');
+  assert.ok(flatButton);
+  flatButton.props.onClick();
+  await flush();
+  const flatText = textOf(draw());
+  assert.match(flatText, /fuyao-a-share/);
+  assert.doesNotMatch(flatText, /2 个服务/);
+  assert.equal(storage.get('dsh-mcp-manager:view'), 'flat');
+});
+
+test('app filter chips narrow visible groups and stack with search', async () => {
+  const state = makeState({ servers: [...fuyaoServers(), amapServer()] });
+  mockFetch({ state });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  const appChip = findAll(
+    tree,
+    (node) => node.type === 'button' && node.props?.['aria-pressed'] !== undefined && textOf(node).includes('同花顺'),
+  )[0];
+  assert.ok(appChip);
+  assert.equal(appChip.props['aria-pressed'], false);
+  appChip.props.onClick();
+  await flush();
+  tree = draw();
+  assert.match(textOf(tree), /fuyao-a-share/);
+  assert.doesNotMatch(textOf(tree), /amap-only/);
+  assert.equal(
+    findAll(tree, (node) => node.type === 'button' && node.props?.['aria-pressed'] !== undefined && textOf(node).includes('同花顺'))[0].props['aria-pressed'],
+    true,
+  );
+
+  // 叠加搜索：应用内再搜 fund
+  const search = findAll(tree, (node) => node.type === 'input' && node.props?.placeholder === '搜索服务名 / 端点 / 传输…')[0];
+  search.props.onChange({ target: { value: 'fund' } });
+  await flush();
+  tree = draw();
+  assert.match(textOf(tree), /fuyao-fund/);
+  assert.doesNotMatch(textOf(tree), /fuyao-a-share/);
+
+  // 清空搜索 + 全部应用
+  findAll(tree, (node) => node.type === 'input' && node.props?.placeholder === '搜索服务名 / 端点 / 传输…')[0]
+    .props.onChange({ target: { value: '' } });
+  await flush();
+  tree = draw();
+  buttonByText(tree, '全部应用').props.onClick();
+  await flush();
+  assert.match(textOf(draw()), /amap-only/);
+});
+
+test('renaming and restoring an app calls renameApp and reloads state', async () => {
+  const state = makeState({ servers: manualAppServers() });
+  const { posts, requests } = mockFetch({
+    state,
+    action: async (body) => {
+      if (body.method === 'renameApp') return { appId: body.params.app, name: body.params.name, updated: 2, apps: [] };
+      return { ok: true };
+    },
+  });
+  const stateCount = () => requests.filter((request) => request.url === '/mcp-manager/api/state').length;
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  assert.match(textOf(tree), /研究平台/);
+
+  const before = stateCount();
+  const restoreButton = buttonByText(tree, '恢复自动识别');
+  assert.ok(restoreButton);
+  restoreButton.props.onClick();
+  await flush();
+  assert.deepEqual(posts.find((post) => post.method === 'renameApp').params, { app: 'manual:研究平台', name: null });
+  assert.ok(stateCount() > before, 'renameApp should reload state');
+
+  tree = draw();
+  const renameButton = buttonByText(tree, '重命名');
+  assert.ok(renameButton);
+  renameButton.props.onClick();
+  await flush();
+  tree = draw();
+  const input = findAll(tree, (node) => node.type === 'input' && node.props?.['aria-label'] === '应用名称')[0];
+  assert.ok(input);
+  input.props.onChange({ target: { value: '研究平台2' } });
+  await flush();
+  tree = draw();
+  findAll(tree, (node) => node.type === 'input' && node.props?.['aria-label'] === '应用名称')[0]
+    .props.onKeyDown({ key: 'Enter' });
+  await flush();
+  const renamePosts = posts.filter((post) => post.method === 'renameApp');
+  assert.equal(renamePosts.length, 2);
+  assert.deepEqual(renamePosts[1].params, { app: 'manual:研究平台', name: '研究平台2' });
+});
+
+test('single-service apps render in the standalone servers section with an app badge', async () => {
+  const state = makeState({ servers: [...fuyaoServers(), amapServer()] });
+  mockFetch({ state });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  const text = textOf(draw());
+  assert.match(text, /独立服务/);
+  assert.match(text, /amap-only/);
+  assert.match(text, /🗺️ 高德地图/);
+  assert.ok(text.indexOf('独立服务') < text.indexOf('amap-only'), 'standalone section should be after group cards');
+});
+
+test('edit panel submits app grouping via patchPrefs after update', async () => {
+  const state = makeState({
+    prefs: { version: 1, updatedAt: 0, ui: { autoProbe: false }, servers: { alpha: { app: '我的高德' } } },
+  });
+  const { posts } = mockFetch({
+    state,
+    action: async (body) => {
+      if (body.method === 'config') return configViewFor();
+      if (body.method === 'update') return { persisted: false };
+      if (body.method === 'patchPrefs') return { serverName: 'alpha', prefs: {} };
+      return { ok: true };
+    },
+  });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  const editButtons = findAll(tree, (node) => node.type === 'button' && textOf(node) === '编辑');
+  assert.equal(editButtons.length, 2);
+  editButtons[0].props.onClick();
+  await flush();
+  tree = draw();
+
+  const appInput = findAll(tree, (node) => node.type === 'input' && node.props?.['aria-label'] === '应用归类')[0];
+  assert.ok(appInput);
+  assert.equal(appInput.props.value, '我的高德');
+  appInput.props.onChange({ target: { value: '我的应用' } });
+  await flush();
+  tree = draw();
+  const saveButton = buttonByText(tree, '保存');
+  assert.ok(saveButton);
+  saveButton.props.onClick();
+  await flush();
+
+  const methods = posts.map((post) => post.method);
+  const updateIndex = methods.indexOf('update');
+  const patchIndex = methods.indexOf('patchPrefs');
+  assert.ok(updateIndex >= 0, 'update should be called');
+  assert.ok(patchIndex > updateIndex, 'patchPrefs(app) should run after update');
+  assert.deepEqual(posts[patchIndex].params, { server: 'include:mcp-alpha', patch: { app: '我的应用' } });
 });

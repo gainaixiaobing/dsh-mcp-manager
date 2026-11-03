@@ -33,6 +33,10 @@ window.__ModuleLoader__.load({
     const TOOL_CENTER_LIMIT = 200;
     /** 行内探针历史画几个色点。 */
     const HISTORY_DOTS = 8;
+    /** 视图模式（按应用 / 平铺）的 localStorage 键。 */
+    const VIEW_STORAGE_KEY = 'dsh-mcp-manager:view';
+    /** 手动应用归类名长度上限（与 host prefs 限制一致）。 */
+    const APP_NAME_LIMIT = 40;
     /** 高级配置的数值边界（与 host normalizeReconnect / maxInstructionBytes 对齐）。 */
     const RECONNECT_LIMITS = {
       initialDelayMs: [100, 60000],
@@ -90,6 +94,26 @@ window.__ModuleLoader__.load({
       tags: { label: '标签', edit: '编辑标签', add: '添加标签', placeholder: '标签，用逗号分隔', save: '保存标签' },
       note: { add: '添加备注', edit: '编辑备注', placeholder: '备注（只存本地偏好文件）', save: '保存备注', label: '备注' },
       history: { label: '最近探测', ok: '成功', fail: '失败', none: '暂无探针历史' },
+      view: { apps: '按应用', flat: '平铺', label: '视图' },
+      apps: {
+        filterLabel: '应用',
+        filterAll: '全部应用',
+        independent: '独立服务',
+        services: '{count} 个服务',
+        healthSummary: '{connected} 已连接 · {failed} 失败 · {disabled} 停用',
+        rename: '重命名',
+        restore: '恢复自动识别',
+        renamePlaceholder: '应用名称',
+        save: '保存',
+        cancel: '取消',
+        renamed: '已重命名为 {name}',
+        restored: '已恢复自动识别',
+        renameFailed: '应用重命名失败：{message}',
+        appSaveFailed: '应用归类保存失败：{message}',
+        manual: '手动归类',
+        badgeTitle: '应用：{name}',
+        empty: '当前筛选下没有可显示的 MCP 服务。',
+      },
       health: {
         statusLabel: '状态',
         successRate: '近期探针成功 {ok}/{total}（{pct}%）',
@@ -128,6 +152,9 @@ window.__ModuleLoader__.load({
         envHint: '例如 {"API_KEY": "..."}；凭据只写入受管存储，不会回显。',
         cwd: '工作目录（可选）',
         timeout: '工具调用超时（毫秒）',
+        app: '应用归类',
+        appHint: '留空表示自动识别（当前识别为 {name}）',
+        appPlaceholder: '留空 = 自动识别',
         enabled: '保存后立即启用',
         existingSecrets: '已有凭据字段：{keys}（留空表示保持不变）',
         clearHeaders: '清空现有请求头',
@@ -291,6 +318,26 @@ window.__ModuleLoader__.load({
       tags: { label: 'Tags', edit: 'Edit tags', add: 'Add tag', placeholder: 'Tags, comma separated', save: 'Save tags' },
       note: { add: 'Add note', edit: 'Edit note', placeholder: 'Note (local prefs only)', save: 'Save note', label: 'Note' },
       history: { label: 'Recent probes', ok: 'ok', fail: 'fail', none: 'No probe history yet' },
+      view: { apps: 'By app', flat: 'Flat', label: 'View' },
+      apps: {
+        filterLabel: 'App',
+        filterAll: 'All apps',
+        independent: 'Standalone servers',
+        services: '{count} servers',
+        healthSummary: '{connected} connected · {failed} failed · {disabled} disabled',
+        rename: 'Rename',
+        restore: 'Restore auto',
+        renamePlaceholder: 'App name',
+        save: 'Save',
+        cancel: 'Cancel',
+        renamed: 'Renamed to {name}',
+        restored: 'Restored automatic grouping',
+        renameFailed: 'App rename failed: {message}',
+        appSaveFailed: 'Saving app grouping failed: {message}',
+        manual: 'Manual',
+        badgeTitle: 'App: {name}',
+        empty: 'No MCP server matches the current filters.',
+      },
       health: {
         statusLabel: 'Status',
         successRate: 'Recent probes ok {ok}/{total} ({pct}%)',
@@ -329,6 +376,9 @@ window.__ModuleLoader__.load({
         envHint: 'e.g. {"API_KEY": "..."}; credentials only go to the managed store and are never echoed back.',
         cwd: 'Working directory (optional)',
         timeout: 'Tool call timeout (ms)',
+        app: 'App grouping',
+        appHint: 'Leave empty for automatic detection (currently: {name})',
+        appPlaceholder: 'Empty = auto',
         enabled: 'Enable after save',
         existingSecrets: 'Existing credential fields: {keys} (leave empty to keep)',
         clearHeaders: 'Clear current headers',
@@ -536,6 +586,22 @@ window.__ModuleLoader__.load({
       },
       scopeRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', fontSize: '12px' },
       notice: { fontSize: '12px', padding: '6px 10px', borderRadius: '8px', margin: 0 },
+      // v0.4 按应用视图
+      viewBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' },
+      groupCard: {
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '10px',
+        background: 'var(--dsw-alias-bg-l2, rgba(127,127,127,.06))', overflow: 'hidden',
+      },
+      groupHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 10px' },
+      groupToggle: {
+        appearance: 'none', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer',
+        font: 'inherit', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: 0, textAlign: 'left',
+      },
+      groupIcon: { fontSize: '18px', lineHeight: '20px' },
+      groupName: { fontWeight: 600, fontSize: '14px' },
+      groupMeta: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
+      groupBody: { borderTop: '1px solid var(--dsw-alias-border-l2)', padding: '0 10px' },
+      renameRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '0 10px 10px' },
     };
 
     const STATUS_COLORS = {
@@ -685,6 +751,85 @@ window.__ModuleLoader__.load({
         failOnStartupError: form.failOnStartupError === true,
         maxInstructionBytes: clampInt(form.maxInstructionBytes, ...MAX_INSTRUCTION_BYTES, 32768),
       };
+    }
+
+    // ── 视图模式 / 应用归类（v0.4）──────────────────────────────────────────
+
+    function readStoredView() {
+      try {
+        const value = globalThis.localStorage?.getItem?.(VIEW_STORAGE_KEY);
+        return value === 'flat' ? 'flat' : 'apps';
+      } catch {
+        return 'apps';
+      }
+    }
+
+    function storeView(mode) {
+      try {
+        globalThis.localStorage?.setItem?.(VIEW_STORAGE_KEY, mode === 'flat' ? 'flat' : 'apps');
+      } catch {
+        /* localStorage 不可用时只丢失记忆，不影响功能 */
+      }
+    }
+
+    /** 单个服务所属应用（host 正常会给 server.app；缺省时退化成独立服务）。 */
+    function appOfServer(server) {
+      const app = server?.app;
+      if (app !== null && typeof app === 'object' && typeof app.id === 'string' && app.id !== '') return app;
+      const name = String(server?.serverName ?? 'unknown');
+      return { id: `server:${name}`, name, source: 'self', singleton: true };
+    }
+
+    /** state.apps（全量聚合）优先；旧 host 未提供时按 server.app 现场聚合。 */
+    function appsOf(state) {
+      const provided = Array.isArray(state?.apps)
+        ? state.apps.filter((app) => app !== null && typeof app === 'object' && typeof app.id === 'string')
+        : [];
+      if (provided.length > 0) return provided;
+      const servers = Array.isArray(state?.servers) ? state.servers : [];
+      const groups = new Map();
+      for (const server of servers) {
+        const app = appOfServer(server);
+        const group = groups.get(app.id) ?? {
+          id: app.id,
+          name: app.name,
+          ...(app.icon ? { icon: app.icon } : {}),
+          ...(app.vendor ? { vendor: app.vendor } : {}),
+          source: app.source,
+          singleton: true,
+          serverIds: [],
+          serverNames: [],
+          total: 0,
+          connected: 0,
+          failed: 0,
+          disabled: 0,
+          noTools: 0,
+          notProvisioned: 0,
+          toolCount: 0,
+          pinnedCount: 0,
+        };
+        group.serverIds.push(server.id);
+        group.serverNames.push(server.serverName);
+        group.total += 1;
+        group.singleton = group.total <= 1;
+        if (server.status === 'connected') group.connected += 1;
+        else if (server.status === 'failed') group.failed += 1;
+        else if (server.status === 'disabled') group.disabled += 1;
+        else if (server.status === 'no-tools') group.noTools += 1;
+        else if (server.status === 'not-provisioned') group.notProvisioned += 1;
+        if (Number.isFinite(server.toolCount)) group.toolCount += server.toolCount;
+        if (server.pinned === true) group.pinnedCount += 1;
+        groups.set(app.id, group);
+      }
+      return [...groups.values()].sort((left, right) => right.total - left.total || left.name.localeCompare(right.name));
+    }
+
+    /** 服务排序：pinned → serverName → id（组内与独立服务区共用）。 */
+    function compareServers(left, right, pinnedOf) {
+      const pinnedDelta = (pinnedOf(right) ? 1 : 0) - (pinnedOf(left) ? 1 : 0);
+      if (pinnedDelta !== 0) return pinnedDelta;
+      return String(left.serverName ?? '').localeCompare(String(right.serverName ?? ''))
+        || String(left.id ?? '').localeCompare(String(right.id ?? ''));
     }
 
     // ── 基础组件 ────────────────────────────────────────────────────────────
@@ -1158,11 +1303,12 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function EditPanel({ t, mode, server, onClose, onSaved }) {
+    function EditPanel({ t, mode, server, manualApp, detectedApp, onClose, onSaved }) {
       const [form, setForm] = React.useState(emptyForm);
       const [config, setConfig] = React.useState(undefined);
       const [clear, setClear] = React.useState({ headers: false, env: false });
       const [advancedOpen, setAdvancedOpen] = React.useState(false);
+      const [appName, setAppName] = React.useState(typeof manualApp === 'string' ? manualApp : '');
       const [busy, setBusy] = React.useState(false);
       const [error, setError] = React.useState('');
 
@@ -1249,6 +1395,14 @@ window.__ModuleLoader__.load({
               if (form.cwd.trim() !== '') changes.cwd = form.cwd.trim();
             }
             const result = await api.action('update', { server: serverKey, changes });
+            // 应用归类存在 prefs（不是连接配置）：update 成功后再写 patchPrefs.app。
+            const nextApp = appName.trim() === '' ? null : appName.trim().slice(0, APP_NAME_LIMIT);
+            try {
+              await api.action('patchPrefs', { server: serverKey, patch: { app: nextApp } });
+            } catch (failure) {
+              setError(format(t, 'apps.appSaveFailed', { message: String(failure?.message ?? failure) }));
+              return;
+            }
             onSaved(
               result?.warning ?? format(t, 'notice.serverUpdated', { name: server?.serverName ?? '' }),
               result?.warning ? 'warn' : 'ok',
@@ -1282,6 +1436,19 @@ window.__ModuleLoader__.load({
             h('select', { style: styles.input, value: form.transport, onChange: update('transport'), disabled: mode === 'edit', 'aria-label': t('form.transport') },
               h('option', { value: 'streamable-http' }, 'streamable-http'),
               h('option', { value: 'stdio' }, 'stdio')))),
+        mode === 'edit'
+          ? h(Field, {
+            label: t('form.app'),
+            hint: format(t, 'form.appHint', { name: String(detectedApp ?? server?.serverName ?? '') }),
+          },
+          h('input', {
+            style: styles.input,
+            value: appName,
+            'aria-label': t('form.app'),
+            placeholder: t('form.appPlaceholder'),
+            onChange: (event) => setAppName(event.target.value),
+          }))
+          : null,
         isHttp
           ? h(Field, { label: t('form.url'), hint: urlMasked ? t('form.urlMaskedHint') : undefined },
             h('input', {
@@ -1626,10 +1793,75 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', style: styles.button, onClick: onClose, disabled: busy }, t('close'))));
     }
 
+    // ── 应用组卡（v0.4）─────────────────────────────────────────────────────
+
+    function AppGroupCard({
+      t, app, servers, collapsed, onToggle, renderServer, onRename, onRestore, busy,
+    }) {
+      const [renaming, setRenaming] = React.useState(false);
+      const [draft, setDraft] = React.useState('');
+      const name = app?.name ?? '';
+      const source = app?.source;
+      const total = Number.isFinite(Number(app?.total)) ? Number(app.total) : servers.length;
+      const connected = Number.isFinite(Number(app?.connected)) ? Number(app.connected) : 0;
+      const failed = Number.isFinite(Number(app?.failed)) ? Number(app.failed) : 0;
+      const disabled = Number.isFinite(Number(app?.disabled)) ? Number(app.disabled) : 0;
+      const toolCount = Number.isFinite(Number(app?.toolCount)) ? Number(app.toolCount) : 0;
+
+      const startRename = () => {
+        setDraft(name);
+        setRenaming(true);
+      };
+      const cancelRename = () => setRenaming(false);
+      const commitRename = () => {
+        setRenaming(false);
+        onRename(draft);
+      };
+
+      return h('div', { style: styles.groupCard, role: 'group', 'aria-label': name },
+        h('div', { style: styles.groupHeader },
+          h('button', {
+            type: 'button',
+            style: styles.groupToggle,
+            'aria-expanded': collapsed !== true,
+            onClick: onToggle,
+          },
+          h('span', { style: styles.groupIcon, 'aria-hidden': 'true' }, String(app?.icon ?? '🧩')),
+          h('span', { style: styles.groupName }, name),
+          h('span', { style: styles.groupMeta }, format(t, 'apps.services', { count: total })),
+          h('span', { style: styles.groupMeta }, format(t, 'apps.healthSummary', { connected, failed, disabled })),
+          h('span', { style: styles.groupMeta }, format(t, 'toolCount', { count: toolCount })),
+          source === 'manual' ? h(Tag, null, t('apps.manual')) : null),
+          h('div', { style: styles.actions },
+            h('button', { type: 'button', style: styles.link, onClick: startRename, disabled: busy }, t('apps.rename')),
+            source === 'manual'
+              ? h('button', { type: 'button', style: styles.link, onClick: onRestore, disabled: busy }, t('apps.restore'))
+              : null)),
+        renaming
+          ? h('div', { style: styles.renameRow },
+            h('input', {
+              style: { ...styles.input, flex: '1 1 200px' },
+              value: draft,
+              'aria-label': t('apps.renamePlaceholder'),
+              placeholder: t('apps.renamePlaceholder'),
+              onChange: (event) => setDraft(event.target.value),
+              onKeyDown: (event) => {
+                if (event?.key === 'Enter') commitRename();
+                if (event?.key === 'Escape') cancelRename();
+              },
+            }),
+            h('button', { type: 'button', style: styles.primaryButton, onClick: commitRename, disabled: busy }, t('apps.save')),
+            h('button', { type: 'button', style: styles.button, onClick: cancelRename, disabled: busy }, t('apps.cancel')))
+          : null,
+        collapsed === true
+          ? null
+          : h('div', { style: styles.groupBody }, servers.map((server) => renderServer(server))));
+    }
+
     // ── 服务行 ──────────────────────────────────────────────────────────────
 
     function ServerRow({
-      t, server, prefs, pinned, probeResult, busy, prefsBusy,
+      t, server, prefs, pinned, probeResult, busy, prefsBusy, appLabel,
       onToggle, onProbe, onEdit, onRemove, onPin, onTags, onNote, onOpenTool,
     }) {
       const [expanded, setExpanded] = React.useState(false);
@@ -1670,7 +1902,8 @@ window.__ModuleLoader__.load({
               h(PinStar, { t, pinned, busy: prefsBusy, onToggle: () => onPin(!pinned) }),
               h('div', { style: styles.serverName, title: server.id }, server.serverName),
               h(Tag, { title: t('origin.' + server.origin) }, t('origin.' + server.origin)),
-              server.duplicate ? h(Tag, { title: t('duplicateHint') }, t('duplicate')) : null),
+              server.duplicate ? h(Tag, { title: t('duplicateHint') }, t('duplicate')) : null,
+              appLabel ? h(Tag, { title: format(t, 'apps.badgeTitle', { name: appLabel }) }, appLabel) : null),
             server.shortId && server.shortId !== server.serverName
               ? h('div', { style: styles.endpoint, title: server.id }, server.shortId)
               : null,
@@ -1780,6 +2013,10 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(null);
       const [probeAll, setProbeAll] = React.useState({ busy: false, done: 0, total: 0, ok: 0 });
       const [autoProbeBusy, setAutoProbeBusy] = React.useState(false);
+      const [viewMode, setViewMode] = React.useState(readStoredView);
+      const [appFilter, setAppFilter] = React.useState('');
+      const [collapsedApps, setCollapsedApps] = React.useState({});
+      const [appBusy, setAppBusy] = React.useState('');
       const mounted = React.useRef(true);
       const autoProbeRan = React.useRef(false);
       const serversRef = React.useRef([]);
@@ -1919,6 +2156,27 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const changeView = (mode) => {
+        const next = mode === 'flat' ? 'flat' : 'apps';
+        setViewMode(next);
+        storeView(next);
+      };
+
+      const renameApp = async (app, name) => {
+        if (app === null || typeof app !== 'object' || typeof app.id !== 'string') return;
+        const trimmed = typeof name === 'string' ? name.trim().slice(0, APP_NAME_LIMIT) : '';
+        setAppBusy(app.id);
+        try {
+          await api.action('renameApp', { app: app.id, name: trimmed === '' ? null : trimmed });
+          await load();
+          notify(trimmed === '' ? t('apps.restored') : format(t, 'apps.renamed', { name: trimmed }), 'ok');
+        } catch (error) {
+          notify(format(t, 'apps.renameFailed', { message: String(error?.message ?? error) }), 'error');
+        } finally {
+          setAppBusy('');
+        }
+      };
+
       const autoProbeOn = state.prefs?.ui?.autoProbe === true;
 
       React.useEffect(() => {
@@ -1931,13 +2189,14 @@ window.__ModuleLoader__.load({
 
       const prefsServers = prefsServersOf(state);
       const pinnedOf = (server) => isPinned(server, prefsServers[server.serverName]);
-      const sorted = [...servers].sort((left, right) => {
-        const pinnedDelta = (pinnedOf(right) ? 1 : 0) - (pinnedOf(left) ? 1 : 0);
-        if (pinnedDelta !== 0) return pinnedDelta;
-        return left.serverName.localeCompare(right.serverName) || String(left.id).localeCompare(String(right.id));
-      });
-      const visible = sorted.filter((server) => {
+      const sorted = [...servers].sort((left, right) => compareServers(left, right, pinnedOf));
+      const apps = appsOf(state);
+      const multiApps = apps.filter((app) => (Number.isFinite(Number(app.total)) ? Number(app.total) : 0) >= 2);
+      // 应用被重命名/恢复后 id 会变：旧筛选值自动失效，避免视图突然空白。
+      const activeAppFilter = appFilter !== '' && apps.some((app) => app.id === appFilter) ? appFilter : '';
+      const filtered = sorted.filter((server) => {
         if (statusFilter !== '' && server.status !== statusFilter) return false;
+        if (activeAppFilter !== '' && appOfServer(server).id !== activeAppFilter) return false;
         if (query.trim() === '') return true;
         const needle = query.trim().toLowerCase();
         return String(server.serverName ?? '').toLowerCase().includes(needle)
@@ -1945,7 +2204,62 @@ window.__ModuleLoader__.load({
           || String(server.shortId ?? '').toLowerCase().includes(needle)
           || String(server.transport ?? '').toLowerCase().includes(needle)
           || String(server.endpoint ?? '').toLowerCase().includes(needle)
+          || String(appOfServer(server).name ?? '').toLowerCase().includes(needle)
           || toolNamesOf(server).some((toolName) => String(toolName).toLowerCase().includes(needle));
+      });
+
+      // 按「可见服务」分组：组排序沿用 state.apps 的顺序（找不到的排最后）。
+      const visibleByApp = new Map();
+      for (const server of filtered) {
+        const app = appOfServer(server);
+        const list = visibleByApp.get(app.id) ?? [];
+        list.push(server);
+        visibleByApp.set(app.id, list);
+      }
+      const appOrder = new Map(apps.map((app, index) => [app.id, index]));
+      const orderedGroupIds = [...visibleByApp.keys()].sort((left, right) => {
+        const leftIndex = appOrder.has(left) ? appOrder.get(left) : Number.MAX_SAFE_INTEGER;
+        const rightIndex = appOrder.has(right) ? appOrder.get(right) : Number.MAX_SAFE_INTEGER;
+        return leftIndex - rightIndex || String(left).localeCompare(String(right));
+      });
+      const visibleGroups = orderedGroupIds.map((id) => ({
+        app: apps.find((app) => app.id === id) ?? appOfServer(visibleByApp.get(id)[0]),
+        servers: visibleByApp.get(id) ?? [],
+      }));
+      const cardGroups = visibleGroups.filter((group) => group.servers.length >= 2);
+      const singletonRows = visibleGroups
+        .filter((group) => group.servers.length === 1)
+        .map((group) => ({ server: group.servers[0], app: group.app }));
+      singletonRows.sort((left, right) => compareServers(left.server, right.server, pinnedOf));
+
+      const startEdit = (server) => setEditing({
+        mode: 'edit',
+        server,
+        manualApp: typeof prefsServers[server.serverName]?.app === 'string' ? prefsServers[server.serverName].app : '',
+        detectedApp: String(server.app?.name ?? server.serverName ?? ''),
+      });
+
+      const rowHandlers = (server) => ({
+        key: server.id,
+        t,
+        server,
+        prefs: prefsServers[server.serverName] ?? {},
+        pinned: typeof server.pinned === 'boolean' ? server.pinned : prefsServers[server.serverName]?.pinned === true,
+        probeResult: probes[server.id] ?? probes[`name:${server.serverName}`],
+        busy: busy[server.id] === true,
+        prefsBusy: prefsBusy[server.id] === true,
+        onToggle: () => toggle(server),
+        onProbe: () => probe(server),
+        onEdit: () => startEdit(server),
+        onRemove: () => remove(server),
+        onPin: (nextPinned) => patchPrefs(server, { pinned: nextPinned }, 'notice.pinFailed'),
+        onTags: (tags) => patchPrefs(server, { tags }, 'notice.tagsFailed'),
+        onNote: (note) => patchPrefs(server, { note }, 'notice.noteFailed'),
+        onOpenTool: (tool) => setSelection(tool),
+      });
+      const renderServer = (server, appLabel) => h(ServerRow, {
+        ...rowHandlers(server),
+        ...(appLabel ? { appLabel } : {}),
       });
 
       const summary = state.summary;
@@ -2005,6 +2319,37 @@ window.__ModuleLoader__.load({
           autoProbeBusy,
           onToggleAutoProbe: () => setAutoProbe(!autoProbeOn),
         }),
+        h('div', { style: styles.viewBar },
+          h('span', { style: styles.label }, t('view.label')),
+          h('button', {
+            type: 'button',
+            'aria-pressed': viewMode === 'apps',
+            style: viewMode === 'apps' ? styles.primaryButton : styles.button,
+            onClick: () => changeView('apps'),
+          }, t('view.apps')),
+          h('button', {
+            type: 'button',
+            'aria-pressed': viewMode === 'flat',
+            style: viewMode === 'flat' ? styles.primaryButton : styles.button,
+            onClick: () => changeView('flat'),
+          }, t('view.flat')),
+          multiApps.length > 0 ? h('span', { style: styles.label }, t('apps.filterLabel')) : null,
+          multiApps.length > 0
+            ? h('button', {
+              type: 'button',
+              'aria-pressed': activeAppFilter === '',
+              style: activeAppFilter === '' ? styles.primaryButton : styles.button,
+              onClick: () => setAppFilter(''),
+            }, t('apps.filterAll'))
+            : null,
+          multiApps.map((app) => h('button', {
+            key: app.id,
+            type: 'button',
+            'aria-pressed': activeAppFilter === app.id,
+            style: activeAppFilter === app.id ? styles.primaryButton : styles.button,
+            title: String(app.name ?? ''),
+            onClick: () => setAppFilter((previous) => (previous === app.id ? '' : app.id)),
+          }, `${app.icon ? `${app.icon} ` : ''}${String(app.name ?? '')} ${Number.isFinite(Number(app.total)) ? Number(app.total) : 0}`))),
         h('div', { style: styles.toolbar },
           h('input', {
             style: { ...styles.input, flex: '1 1 180px' },
@@ -2022,6 +2367,8 @@ window.__ModuleLoader__.load({
             t,
             mode: editing.mode,
             server: editing.server,
+            manualApp: editing.manualApp,
+            detectedApp: editing.detectedApp,
             onClose: () => setEditing(null),
             onSaved: (message, kind) => { notify(message, kind ?? 'ok'); load(); },
           })
@@ -2042,36 +2389,39 @@ window.__ModuleLoader__.load({
           onOpenTool: (tool) => setSelection(tool),
         }),
 
-        servers.length === 0 || visible.length === 0
-          ? h('p', { style: styles.hint }, t('empty'))
-          : h('div', { style: styles.table, role: 'table', 'aria-label': t('title') },
-            h('div', {
-              style: { ...styles.rowMain, ...styles.summary, borderBottom: '1px solid var(--dsw-alias-border-l2)' },
-              role: 'row',
-            },
-            h('span', { role: 'columnheader' }, t('column.server')),
-            h('span', { role: 'columnheader' }, t('column.status')),
-            h('span', { role: 'columnheader' }, t('column.transport')),
-            h('span', { role: 'columnheader' }, t('column.tools')),
-            h('span', { role: 'columnheader' }, t('column.actions'))),
-            visible.map((server) => h(ServerRow, {
-              key: server.id,
-              t,
-              server,
-              prefs: prefsServers[server.serverName] ?? {},
-              pinned: typeof server.pinned === 'boolean' ? server.pinned : prefsServers[server.serverName]?.pinned === true,
-              probeResult: probes[server.id] ?? probes[`name:${server.serverName}`],
-              busy: busy[server.id] === true,
-              prefsBusy: prefsBusy[server.id] === true,
-              onToggle: () => toggle(server),
-              onProbe: () => probe(server),
-              onEdit: () => setEditing({ mode: 'edit', server }),
-              onRemove: () => remove(server),
-              onPin: (nextPinned) => patchPrefs(server, { pinned: nextPinned }, 'notice.pinFailed'),
-              onTags: (tags) => patchPrefs(server, { tags }, 'notice.tagsFailed'),
-              onNote: (note) => patchPrefs(server, { note }, 'notice.noteFailed'),
-              onOpenTool: (tool) => setSelection(tool),
-            }))),
+        servers.length === 0 || filtered.length === 0
+          ? h('p', { style: styles.hint }, viewMode === 'apps' ? t('apps.empty') : t('empty'))
+          : viewMode === 'flat'
+            ? h('div', { style: styles.table, role: 'table', 'aria-label': t('title') },
+              h('div', {
+                style: { ...styles.rowMain, ...styles.summary, borderBottom: '1px solid var(--dsw-alias-border-l2)' },
+                role: 'row',
+              },
+              h('span', { role: 'columnheader' }, t('column.server')),
+              h('span', { role: 'columnheader' }, t('column.status')),
+              h('span', { role: 'columnheader' }, t('column.transport')),
+              h('span', { role: 'columnheader' }, t('column.tools')),
+              h('span', { role: 'columnheader' }, t('column.actions'))),
+              filtered.map((server) => renderServer(server)))
+            : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              cardGroups.map((group) => h(AppGroupCard, {
+                key: group.app.id,
+                t,
+                app: group.app,
+                servers: group.servers,
+                collapsed: collapsedApps[group.app.id] === true,
+                onToggle: () => setCollapsedApps((previous) => ({ ...previous, [group.app.id]: !previous[group.app.id] })),
+                renderServer: (server) => renderServer(server),
+                onRename: (name) => renameApp(group.app, name),
+                onRestore: () => renameApp(group.app, null),
+                busy: appBusy === group.app.id,
+              })),
+              singletonRows.length > 0
+                ? h('div', { style: styles.groupCard },
+                  h('h4', { style: styles.panelTitle, title: t('apps.independent') }, t('apps.independent')),
+                  h('div', { style: styles.table, role: 'table', 'aria-label': t('apps.independent') },
+                    singletonRows.map((item) => renderServer(item.server, `${item.app.icon ? `${item.app.icon} ` : ''}${String(item.app.name ?? '')}`))))
+                : null),
 
         state.storePath ? h('div', { style: styles.summary }, format(t, 'storePath', { path: state.storePath })) : null,
         state.prefsPath ? h('div', { style: styles.summary }, format(t, 'prefsPath', { path: state.prefsPath })) : null,
