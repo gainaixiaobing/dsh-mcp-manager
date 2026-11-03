@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import { normalizeRecord, toMcpServersJson, fromMcpServersJson } from '../lib/co
 import { scanImports, parseMcpServersText, parseJsonRelaxed, stripJsonc } from '../lib/importers.js';
 import { sanitizeText, sanitizeUrl } from '../lib/sanitize.js';
 import { probeRecord, probeStdio } from '../lib/probe.js';
+import { PrefsStore } from '../lib/prefs.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STUB = join(HERE, 'fixtures', 'stub-mcp.mjs');
@@ -27,6 +28,7 @@ const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client';
 
 class FakeTools {
   defs = new Map();
+  calls = [];
   register(definition) {
     if (!definition?.name) throw new Error('tool name required');
     this.defs.set(definition.name, definition);
@@ -38,6 +40,28 @@ class FakeTools {
       description: definition.description,
       parameters: definition.parameters,
     }));
+  }
+  /** 模拟宿主执行管线：echo 回显参数、fail 返回错误、slow 等待 signal 中止。 */
+  async execute(exec) {
+    this.calls.push({ name: exec.name, arguments: exec.arguments });
+    const serverName = exec.name.slice('mcp__'.length, exec.name.lastIndexOf('__'));
+    const toolName = exec.name.slice(exec.name.lastIndexOf('__') + 2);
+    if (toolName === 'fail') {
+      return {
+        isError: true,
+        error: { message: 'stub failure', info: { code: 'STUB_FAIL' } },
+        content: [{ type: 'text', text: 'stub failure' }],
+      };
+    }
+    if (toolName === 'slow') {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      return { isError: false, value: { slow: true }, content: [{ type: 'text', text: 'slow done' }] };
+    }
+    return {
+      isError: false,
+      value: { serverName, toolName, arguments: exec.arguments },
+      content: [{ type: 'text', text: `${serverName}:${toolName}:ok` }, { type: 'image', mimeType: 'image/png', data: 'AAAA' }],
+    };
   }
 }
 
@@ -534,14 +558,19 @@ test('registered tools declare schemas accepted by the harness subset', async (t
   const names = [...ctx.tools.defs.keys()].filter((name) => name.startsWith('mcp_manager_')).sort();
   assert.deepEqual(names, [
     'mcp_manager_add',
+    'mcp_manager_call_tool',
     'mcp_manager_export',
     'mcp_manager_import',
     'mcp_manager_inspect',
     'mcp_manager_list',
+    'mcp_manager_prefs',
     'mcp_manager_probe',
+    'mcp_manager_probe_many',
     'mcp_manager_remove',
     'mcp_manager_scan',
     'mcp_manager_set_enabled',
+    'mcp_manager_store_repair',
+    'mcp_manager_tools',
     'mcp_manager_update',
   ]);
   for (const definition of ctx.tools.defs.values()) {
@@ -582,6 +611,358 @@ test('tool round trip: add → list → probe → export → remove', async (t) 
 });
 
 test('plugin config normalization keeps defaults', () => {
-  assert.deepEqual(normalizePluginConfig(undefined), { webApi: true, includeDescriptions: true, storePath: undefined });
-  assert.deepEqual(normalizePluginConfig({ webApi: false, includeDescriptions: false, storePath: '/tmp/x.json' }), { webApi: false, includeDescriptions: false, storePath: '/tmp/x.json' });
+  assert.deepEqual(normalizePluginConfig(undefined), { webApi: true, includeDescriptions: true, storePath: undefined, prefsPath: undefined });
+  assert.deepEqual(
+    normalizePluginConfig({ webApi: false, includeDescriptions: false, storePath: '/tmp/x.json', prefsPath: '/tmp/p.json' }),
+    { webApi: false, includeDescriptions: false, storePath: '/tmp/x.json', prefsPath: '/tmp/p.json' },
+  );
+});
+
+// ─── v0.3：偏好存储 / 工具目录 / 工具试用 / 高级配置 / 诊断 ───────────────────
+
+test('PrefsStore persists pins/tags/notes, bounds probe history and writes 0600', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-prefs-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'prefs.json');
+  const store = new PrefsStore({ path });
+  await store.load();
+  for (let index = 0; index < 25; index += 1) {
+    await store.recordProbe('svc-a', {
+      at: Date.now() + index,
+      ok: index % 2 === 0,
+      latencyMs: index,
+      toolCount: 2,
+      errorCode: index % 2 === 0 ? undefined : 'timeout',
+    });
+  }
+  const snapshot = store.snapshot();
+  assert.equal(snapshot.servers['svc-a'].history.length, 20);
+  assert.equal(snapshot.servers['svc-a'].probe.latencyMs, 24);
+  assert.equal(snapshot.servers['svc-a'].probe.ok, true);
+
+  const next = await store.patchServer('svc-a', { pinned: true, tags: [' 办公 ', '办公', '法务'], note: '内网服务' });
+  assert.equal(next.pinned, true);
+  assert.deepEqual(next.tags, ['办公', '法务']);
+  assert.equal(next.note, '内网服务');
+  // null 清除
+  const cleared = await store.patchServer('svc-a', { note: null, tags: null, pinned: null });
+  assert.equal(cleared.pinned, undefined);
+  assert.equal(cleared.tags, undefined);
+  assert.equal(cleared.note, undefined);
+  assert.equal(cleared.history.length, 20);
+
+  const info = await stat(path);
+  assert.equal(info.mode & 0o777, 0o600);
+
+  // 坏文件不覆盖、只报错
+  await writeFile(path, '{ not json', 'utf8');
+  const broken = new PrefsStore({ path });
+  await broken.load();
+  assert.ok(broken.loadError);
+  await assert.rejects(() => broken.patchServer('x', { pinned: true }), /prefs/);
+  assert.equal(await readFile(path, 'utf8'), '{ not json');
+});
+
+test('tool catalog, detail and invoke go through ctx.tools.execute', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'tools-one', transport: 'streamable-http', url: 'https://tools.example/mcp' });
+  // 额外的假工具：一个返回错误、一个慢
+  ctx.tools.register({ name: 'mcp__tools-one__fail', description: 'fail', parameters: { type: 'object', properties: {} } });
+  ctx.tools.register({ name: 'mcp__tools-one__slow', description: 'slow', parameters: { type: 'object', properties: {} } });
+
+  const catalog = manager.toolCatalog({});
+  assert.ok(catalog.total >= 2);
+  assert.ok(catalog.tools.every((tool) => tool.toolName !== 'mcp_manager_list'));
+  const echo = catalog.tools.find((tool) => tool.toolName === 'echo');
+  assert.equal(echo.serverName, 'tools-one');
+  assert.equal(echo.parameters, undefined);
+
+  const withSchema = manager.toolCatalog({ server: 'tools-one', includeSchema: true });
+  assert.ok(withSchema.tools.every((tool) => tool.parameters !== undefined));
+  assert.equal(manager.toolCatalog({ query: 'echo' }).total, 1);
+  assert.equal(manager.toolCatalog({ limit: 1 }).returned, 1);
+
+  const detail = manager.toolDetail('tools-one', 'echo');
+  assert.equal(detail.publicName, 'mcp__tools-one__echo');
+  assert.deepEqual(detail.sampleArguments, {});
+
+  const ok = await manager.invokeTool({ server: 'tools-one', tool: 'echo', arguments: { a: 1 } });
+  assert.equal(ok.ok, true);
+  assert.match(ok.text, /tools-one:echo:ok/);
+  assert.match(ok.text, /\[image image\/png/);
+  assert.equal(ctx.tools.calls.length, 1);
+  assert.deepEqual(ctx.tools.calls[0].arguments, { a: 1 });
+
+  const failed = await manager.invokeTool({ server: 'tools-one', tool: 'fail', arguments: {} });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.isError, true);
+  assert.equal(failed.error.code, 'STUB_FAIL');
+
+  const timedOut = await manager.invokeTool({ server: 'tools-one', tool: 'slow', arguments: {}, timeoutMs: 1000 });
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.code, 'timeout');
+
+  const missing = await manager.invokeTool({ server: 'tools-one', tool: 'nope', arguments: {} });
+  assert.equal(missing.code, 'tool-not-found');
+  assert.ok(missing.message.includes('echo'));
+
+  const badArgs = await manager.invokeTool({ server: 'tools-one', tool: 'echo', arguments: [1, 2] });
+  assert.equal(badArgs.code, 'invalid-arguments');
+
+  const before = ctx.tools.calls.length;
+  const dry = await manager.invokeTool({ server: 'tools-one', tool: 'echo', dryRun: true });
+  assert.equal(dry.dryRun, true);
+  assert.equal(ctx.tools.calls.length, before);
+
+  const foreign = await manager.invokeTool({ server: 'tools-one', tool: 'mcp_manager_list', args: {} });
+  assert.equal(foreign.code, 'tool-not-found');
+});
+
+test('advanced dsh-mcp-client fields survive normalize → edit → export', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({
+    serverName: 'adv-one',
+    transport: 'streamable-http',
+    url: 'https://adv.example/mcp',
+    reconnect: { enabled: true, initialDelayMs: 500, maxAttempts: 5 },
+    failOnStartupError: true,
+    maxInstructionBytes: 65536,
+  });
+  const view = manager.configForEdit('adv-one');
+  assert.equal(view.advanced.reconnect.maxAttempts, 5);
+  assert.equal(view.advanced.failOnStartupError, true);
+  assert.equal(view.advanced.maxInstructionBytes, 65536);
+
+  const patched = await manager.update('adv-one', { reconnect: { maxAttempts: 7 } });
+  assert.equal(patched.persisted, true);
+  assert.equal(manager.configForEdit('adv-one').advanced.reconnect.maxAttempts, 7);
+  assert.equal(manager.configForEdit('adv-one').advanced.reconnect.initialDelayMs, 500);
+
+  const exported = await manager.export({ format: 'patch', server: 'adv-one' });
+  assert.match(exported.content, /reconnect/);
+  assert.match(exported.content, /maxInstructionBytes/);
+
+  assert.throws(
+    () => normalizeRecord({ serverName: 'bad', transport: 'streamable-http', url: 'https://x.example/mcp', reconnect: { maxAttempts: 1000 } }),
+    /maxAttempts/,
+  );
+  assert.throws(
+    () => normalizeRecord({ serverName: 'bad', transport: 'streamable-http', url: 'https://x.example/mcp', maxInstructionBytes: 1 }),
+    /maxInstructionBytes/,
+  );
+});
+
+test('probe records history and diagnostics export summarizes it', async (t) => {
+  const storePath = await tempStore(t);
+  const prefsPath = join(dirname(storePath), 'prefs.json');
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath, prefsPath });
+  await manager.init();
+  await manager.add({ serverName: 'diag-one', transport: 'stdio', command: process.execPath, args: [STUB] });
+  const probed = await manager.probe('diag-one');
+  assert.equal(probed.ok, true);
+  assert.ok(Array.isArray(probed.history));
+  assert.equal(probed.history.length, 1);
+  assert.equal(probed.history[0].ok, true);
+
+  await manager.patchPrefs('diag-one', { pinned: true, tags: ['测试'], note: '诊断用' });
+  const state = manager.state();
+  assert.equal(state.prefs.servers['diag-one'].pinned, true);
+  assert.equal(state.prefsPath, prefsPath);
+
+  const report = await manager.export({ format: 'diagnostics' });
+  assert.match(report.content, /# MCP 诊断报告/);
+  assert.match(report.content, /## 服务清单/);
+  assert.match(report.content, /## 探针历史/);
+  assert.match(report.content, /diag-one/);
+  assert.match(report.content, /收藏的服务/);
+
+  const many = await manager.probeMany({ servers: ['diag-one'], timeoutMs: 5000 });
+  assert.equal(many.total, 1);
+  assert.equal(many.ok, 1);
+  assert.equal(many.results[0].serverName, 'diag-one');
+});
+
+test('export supports multi-server selection', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'exp-a', transport: 'streamable-http', url: 'https://a.example/mcp' });
+  await manager.add({ serverName: 'exp-b', transport: 'streamable-http', url: 'https://b.example/mcp' });
+  const json = await manager.export({ format: 'json', servers: ['exp-a'] });
+  assert.match(json.content, /"exp-a"/);
+  assert.doesNotMatch(json.content, /"exp-b"/);
+});
+
+// ─── v0.3：安全与契约修复（对应审计 P0/P1） ───────────────────────────────────
+
+test('patch export defaults to managed-only and profile rows become override fragments', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({ id: 'mcp-profile-row', config: { serverName: 'profile-row', transport: 'streamable-http', url: 'https://p.example/mcp' } });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'managed-row', transport: 'streamable-http', url: 'https://m.example/mcp' });
+
+  const onlyManaged = await manager.export({ format: 'patch' });
+  assert.match(onlyManaged.content, /serverName: managed-row/);
+  assert.doesNotMatch(onlyManaged.content, /serverName: profile-row/);
+  assert.ok(onlyManaged.warnings.some((warning) => warning.includes('profile')));
+
+  const withProfile = await manager.export({ format: 'patch', includeProfile: true });
+  assert.match(withProfile.content, /- insert:/);
+  // profile 行必须是 override（顶层 - id），不能塞进 insert
+  assert.match(withProfile.content, /^- id: mcp-profile-row$/m);
+  assert.match(withProfile.content, /^- insert:$/m);
+});
+
+test('configForEdit masks credential URLs and empty url keeps the original', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'url-secret', transport: 'streamable-http', url: 'https://api.example/mcp?key=SECRET123' });
+
+  const view = manager.configForEdit('url-secret');
+  assert.equal(view.urlMasked, true);
+  assert.doesNotMatch(view.url, /SECRET123/);
+  assert.match(view.url, /key=\*\*\*/);
+
+  await manager.update('url-secret', { url: '' });
+  const after = manager.configForEdit('url-secret');
+  assert.equal(after.urlMasked, true);
+  const exported = await manager.export({ format: 'json', redact: false });
+  assert.match(exported.content, /SECRET123/); // 空 url 没有覆盖掉原值
+});
+
+test('import rejects files that were not discovered by scan()', async (t) => {
+  const storePath = await tempStore(t);
+  const dir = dirname(storePath);
+  const rogue = join(dir, 'rogue.json');
+  await writeFile(rogue, JSON.stringify({ mcpServers: { rogue: { command: 'node' } } }), 'utf8');
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await assert.rejects(
+    () => manager.import({ file: rogue }),
+    (error) => error.code === 'import-file-untrusted',
+  );
+});
+
+test('export redacts URL query values and stdio args placeholders', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({
+    serverName: 'args-srv',
+    transport: 'stdio',
+    command: 'node',
+    args: ['server.js', '--token', 'super-secret-token', '--api-key=another-secret-value'],
+    env: { NORMAL: 'plain-value', TALL: 'Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm' },
+  });
+  const patch = await manager.export({ format: 'patch', server: 'args-srv' });
+  assert.doesNotMatch(patch.content, /super-secret-token/);
+  assert.doesNotMatch(patch.content, /another-secret-value/);
+  assert.doesNotMatch(patch.content, /Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm/);
+  assert.match(patch.content, /\$\{MCP_ARGS_SRV_ARG_1\}/);
+
+  const json = await manager.export({ format: 'json', server: 'args-srv' });
+  assert.doesNotMatch(json.content, /super-secret-token/);
+});
+
+test('YAML export quotes unsafe keys and uses block scalars for multiline values', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({
+    serverName: 'yaml-srv',
+    transport: 'stdio',
+    command: 'node',
+    args: ['x'],
+    env: { 'X: INJECTED': 'v1', 'ATVAL': '@reserved', 'NUM': '123', 'MULTI': 'line1\nline2' },
+  });
+  const patch = await manager.export({ format: 'patch', server: 'yaml-srv', redact: false });
+  assert.match(patch.content, /'X: INJECTED': v1/);
+  assert.match(patch.content, /ATVAL: '@reserved'/);
+  assert.match(patch.content, /NUM: '123'/);
+  assert.match(patch.content, /MULTI: \|-/);
+});
+
+test('state strips tool descriptions, reports summary toolCount and keeps createdAt', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'state-srv', transport: 'streamable-http', url: 'https://s.example/mcp' });
+  const state = manager.state();
+  const server = state.servers.find((item) => item.serverName === 'state-srv');
+  assert.deepEqual(server.tools, []);
+  assert.ok(Array.isArray(server.toolNames));
+  assert.equal(state.toolCount, state.summary.toolCount);
+
+  const createdAt = manager.store.get('state-srv').createdAt;
+  assert.ok(Number.isFinite(createdAt));
+  // 重新加载存储也要保住 createdAt
+  const again = createManager(ctx, { storePath });
+  await again.init();
+  assert.equal(again.store.get('state-srv').createdAt, createdAt);
+});
+
+test('remove on a not-provisioned managed record reports removed and persisted', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  // 直接写入一条受管记录但不 provision（模拟启动失败）
+  await manager.store.mutate((draft) => {
+    draft.servers['ghost-srv'] = normalizeRecord(
+      { serverName: 'ghost-srv', transport: 'streamable-http', url: 'https://ghost.example/mcp' },
+      { source: 'managed' },
+    );
+    return null;
+  });
+  const result = await manager.remove('ghost-srv');
+  assert.equal(result.removed, true);
+  assert.equal(result.persisted, true);
+  assert.equal(result.entryRemoved, false);
+  assert.equal(manager.store.get('ghost-srv'), undefined);
+});
+
+test('new conversation tools round trip: tools / call_tool / prefs / probe_many', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  registerTools(ctx, manager);
+  const tool = (name) => ctx.tools.defs.get(name);
+  await manager.add({ serverName: 'conv-srv', transport: 'streamable-http', url: 'https://c.example/mcp' });
+
+  const catalog = await tool('mcp_manager_tools').execute({ query: 'echo' });
+  assert.equal(catalog.total, 1);
+  assert.equal(catalog.tools[0].serverName, 'conv-srv');
+
+  const dry = await tool('mcp_manager_call_tool').execute({ server: 'conv-srv', tool: 'echo', dryRun: true });
+  assert.equal(dry.dryRun, true);
+  assert.ok(dry.parametersJson.includes('properties'));
+
+  const called = await tool('mcp_manager_call_tool').execute({ server: 'conv-srv', tool: 'echo', arguments: { q: 1 } });
+  assert.equal(called.ok, true);
+  assert.match(called.text, /conv-srv:echo:ok/);
+
+  const patched = await tool('mcp_manager_prefs').execute({ action: 'patch', server: 'conv-srv', patch: { pinned: true, tags: ['x'] } });
+  assert.equal(patched.server.pinned, true);
+  const listed = await tool('mcp_manager_prefs').execute({ action: 'get' });
+  assert.equal(listed.servers['conv-srv'].tags[0], 'x');
+
+  const probed = await tool('mcp_manager_probe_many').execute({ servers: ['conv-srv'] });
+  assert.equal(probed.total, 1);
 });

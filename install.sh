@@ -31,12 +31,23 @@ BACKUP="$PROFILE/package.json.bak-mcp-manager-$STAMP"
 cp "$PROFILE/package.json" "$BACKUP"
 echo "已备份 package.json → $BACKUP"
 
-mkdir -p "$TARGET/locale" "$TARGET/test"
+mkdir -p "$TARGET/locale" "$TARGET/lib" "$TARGET/test/fixtures"
 cp "$PLUGIN_DIR/package.json" "$PLUGIN_DIR/index.js" "$PLUGIN_DIR/client.js" \
    "$PLUGIN_DIR/cordis.patch.yml" "$PLUGIN_DIR/icon.svg" "$PLUGIN_DIR/README.md" "$TARGET/"
 cp "$PLUGIN_DIR/locale/"*.json "$TARGET/locale/"
+# 注意：lib/ 是插件的实现主体（v0.2.0 的安装脚本漏拷过它，会导致 ERR_MODULE_NOT_FOUND）
+cp "$PLUGIN_DIR"/lib/*.js "$TARGET/lib/"
 cp "$PLUGIN_DIR/test/"*.mjs "$TARGET/test/" 2>/dev/null || true
-echo "已复制插件文件 → $TARGET"
+cp "$PLUGIN_DIR/test/fixtures/"* "$TARGET/test/fixtures/" 2>/dev/null || true
+echo "已复制插件文件 → $TARGET（含 lib/ 与 test/fixtures/）"
+
+# 安装后自检：能 import 才说明文件齐全
+if ! node -e "import('$TARGET/index.js').then(() => process.exit(0)).catch((error) => { console.error(error.message); process.exit(1); })" >/dev/null 2>&1; then
+  echo "错误：安装后自检失败（index.js 无法 import），已回滚 package.json" >&2
+  cp "$BACKUP" "$PROFILE/package.json"
+  exit 1
+fi
+echo "安装自检通过：index.js 可正常加载"
 
 node - "$PROFILE/package.json" "$BUNDLE" <<'NODE'
 const fs = require('node:fs');
