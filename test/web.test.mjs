@@ -78,16 +78,28 @@ function makeFakeCtx() {
     },
   };
 
+  const listeners = new Map();
   const ctx = {
     tools,
     loader,
     logger: { info() {}, warn() {}, debug() {} },
     effect() {},
+    on(name, listener) {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener]);
+      return () => {};
+    },
     inject(deps, callback) {
       if (Array.isArray(deps) && deps.includes('webServer')) callback({ webServer, effect(fn) { fn(); } });
     },
   };
-  return { ctx, routes, taps, tools };
+  return { ctx, routes, taps, tools, listeners };
+}
+
+/** 模拟 webServer.collectIndexInjections()：emit 一次 webserver/index-inject。 */
+function collectInjections(listeners) {
+  const table = [];
+  for (const listener of listeners.get('webserver/index-inject') ?? []) listener(table);
+  return table;
 }
 
 function makeRequest({ method = 'GET', url = '/mcp-manager/api/state', headers = {}, body } = {}) {
@@ -118,12 +130,12 @@ async function setup(t, options = {}) {
   t.after(() => rm(dir, { recursive: true, force: true }));
   const storePath = join(dir, 'connections.json');
   const prefsPath = join(dir, 'prefs.json');
-  const { ctx, routes, taps, tools } = makeFakeCtx();
+  const { ctx, routes, taps, tools, listeners } = makeFakeCtx();
   const manager = createManager(ctx, { storePath, prefsPath });
   await manager.init();
   mountWebApi(ctx, manager, options);
   const route = routes[0];
-  return { ctx, manager, route, taps, tools };
+  return { ctx, manager, route, taps, tools, listeners };
 }
 
 function tokenFromTaps(taps) {
@@ -147,9 +159,16 @@ async function callAction(route, token, method, params = {}, extraHeaders = {}) 
 }
 
 test('web API injects a token and rejects requests without it', async (t) => {
-  const { route, taps } = await setup(t);
+  const { route, taps, listeners } = await setup(t);
   assert.equal(typeof route.handler, 'function');
   const token = tokenFromTaps(taps);
+
+  // 桌面端关键路径：结构化注入表（Electron 走 dsh-app:// + IPC boot injections，不跑 tapIndex）
+  const table = collectInjections(listeners);
+  assert.equal(table.length, 1);
+  assert.equal(table[0].kind, 'global');
+  assert.equal(table[0].name, '__MCP_MANAGER_TOKEN__');
+  assert.equal(table[0].value, token);
   assert.match(token, /^[0-9a-f]{48}$/);
 
   const missing = makeResponse();

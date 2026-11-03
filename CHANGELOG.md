@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.3] — 2026-11-03
+
+### Fixed
+
+- **桌面端「管理 API 不可用（缺少或错误的 x-mcp-manager-token）」**：桌面端 Electron 的窗口加载的是
+  `dsh-app://app/` 静态 index（不是 webServer 渲染的 HTML），宿主只通过 IPC 把
+  `webServer.collectIndexInjections()` 的结构化注入表交给页面解释器——`tapIndex` 永远不会跑到桌面端。
+  现在改为订阅 `webserver/index-inject` 事件，推入 `{kind:'global', name:'__MCP_MANAGER_TOKEN__'}`
+  行：HTTP（dsh web）会渲染成 head 内联脚本，桌面端由 boot injections 应用，两条路径都能拿到 token。
+  `tapIndex` 仅作为老宿主兜底保留。
+- web 测试补结构化注入表断言（kind/name/value 与 tap 里的 token 一致），防止再次只覆盖 HTTP 路径。
+
 ## [0.4.2] — 2026-11-03
 
 ### Fixed
