@@ -39,7 +39,7 @@ cp "$PLUGIN_DIR/locale/"*.json "$TARGET/locale/"
 cp "$PLUGIN_DIR"/lib/*.js "$TARGET/lib/"
 cp "$PLUGIN_DIR/test/"*.mjs "$TARGET/test/" 2>/dev/null || true
 cp "$PLUGIN_DIR/test/fixtures/"* "$TARGET/test/fixtures/" 2>/dev/null || true
-echo "已复制插件文件 → $TARGET（含 lib/ 与 test/fixtures/）"
+echo "已复制插件文件 → ${TARGET}（含 lib/ 与 test/fixtures/）"
 
 # 安装后自检：能 import 才说明文件齐全
 if ! node -e "import('$TARGET/index.js').then(() => process.exit(0)).catch((error) => { console.error(error.message); process.exit(1); })" >/dev/null 2>&1; then
