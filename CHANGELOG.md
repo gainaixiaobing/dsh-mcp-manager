@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.4.0] — 2026-11-03
+
+按「应用」归类：多个 MCP 服务聚合成一张卡（高德地图 / 同花顺 / 企查查 / 北大法宝…），
+面板默认用「按应用」视图，告别一长串 serverName。
+
+### Added
+
+- **应用目录与自动归类**（`lib/apps.js`）：内置常见应用（高德地图、同花顺、企查查、北大法宝、
+  知乎、飞书、GitHub、DeepSeek、文件系统、fetch、memory、Playwright、SQLite），
+  按 serverName / 前缀 / URL host / stdio 包名匹配；未知服务再按域名、公共前缀、独立服务兜底。
+- **`mcp_manager_apps` 对话工具**：按应用列出服务数、健康计数、工具数；支持按应用名过滤。
+- **`state.apps` + `server.app`**：host 侧聚合并排好序，UI 直接渲染；每个服务带
+  `app: {id,name,icon,vendor,source}`。
+- **`renameApp` action / 组内批量覆盖**：重命名一个应用组会写入该组全部服务的 `prefs.app`；
+  传 `name=null` 清除覆盖、恢复自动识别。
+- **`patchPrefs` 支持 `app`**：单个服务也能手动归类。
+- **面板「按应用」视图**（默认）：「平铺」可切回；多服务应用显示为可折叠组卡（icon + 名称 +
+  服务数 + 健康小计 + 工具数），单服务应用收进「独立服务」区；组头支持重命名/恢复；
+  应用筛选 chips 与状态筛选、搜索叠加。
+- **导出/列表带应用**：Markdown 清单新增「应用」列；`mcp_manager_list` 渲染里附带按应用摘要。
+
+### Changed
+
+- 版本 0.4.0；Host↔Client 契约补充第 8 节（应用归类）。
+
+### Tests
+
+- host 新增：应用识别（catalog/host/prefix/self/手动覆盖）、state 聚合、应用重命名/重置、
+  `mcp_manager_apps` 工具；client 新增：分组渲染、折叠、应用筛选、重命名、独立服务区、编辑面板归类。
+- 全量：**66 个用例**（host 39 + web 4 + client 23），`npm test` 全绿。
+
 ## [0.3.0] — 2026-11-03
 
 从「配置管理器」升级为「MCP 调试台 + 健康看板」：工具可浏览、可在线试用；

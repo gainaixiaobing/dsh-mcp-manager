@@ -19,6 +19,7 @@ import { scanImports, parseMcpServersText, parseJsonRelaxed, stripJsonc } from '
 import { sanitizeText, sanitizeUrl } from '../lib/sanitize.js';
 import { probeRecord, probeStdio } from '../lib/probe.js';
 import { PrefsStore } from '../lib/prefs.js';
+import { detectApp } from '../lib/apps.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STUB = join(HERE, 'fixtures', 'stub-mcp.mjs');
@@ -558,6 +559,7 @@ test('registered tools declare schemas accepted by the harness subset', async (t
   const names = [...ctx.tools.defs.keys()].filter((name) => name.startsWith('mcp_manager_')).sort();
   assert.deepEqual(names, [
     'mcp_manager_add',
+    'mcp_manager_apps',
     'mcp_manager_call_tool',
     'mcp_manager_export',
     'mcp_manager_import',
@@ -965,4 +967,106 @@ test('new conversation tools round trip: tools / call_tool / prefs / probe_many'
 
   const probed = await tool('mcp_manager_probe_many').execute({ servers: ['conv-srv'] });
   assert.equal(probed.total, 1);
+});
+
+// ─── v0.4：按应用归类 ────────────────────────────────────────────────────────
+
+test('detectApp matches catalog, host, prefix, manual override and singleton fallback', () => {
+  const siblings = ['fuyao-a-share', 'fuyao-fund', 'amap', 'qcc-company', 'custom-svc'];
+  assert.deepEqual(
+    (({ id, name }) => ({ id, name }))(detectApp({ serverName: 'fuyao-a-share', siblings })),
+    { id: 'fuyao', name: '同花顺' },
+  );
+  assert.equal(detectApp({ serverName: 'amap', endpoint: 'https://mcp.amap.com/mcp?key=***' }).id, 'amap');
+  assert.equal(detectApp({ serverName: 'qcc-risk', config: { transport: 'streamable-http', url: 'https://agent.qcc.com/mcp/risk/stream' } }).id, 'qcc');
+  assert.equal(detectApp({ serverName: 'gh', config: { transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] } }).id, 'github');
+  const hostApp = detectApp({ serverName: 'custom-svc', endpoint: 'https://api.example.com/mcp' });
+  assert.equal(hostApp.id, 'host:example.com');
+  assert.equal(hostApp.name, 'example.com');
+  assert.equal(detectApp({ serverName: 'mystery-svc', siblings: ['other-svc'] }).source, 'self');
+  assert.equal(detectApp({ serverName: 'x', manual: '同花顺' }).id, 'fuyao');
+  assert.equal(detectApp({ serverName: 'x', manual: '我的内网工具' }).id, 'manual:我的内网工具');
+});
+
+test('state groups servers by app and prefs can override the app name', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({ id: 'include:mcp-amap', config: { serverName: 'amap', transport: 'streamable-http', url: 'https://mcp.amap.com/mcp' } });
+  loader.addEntry({ id: 'include:mcp-fuyao-1', config: { serverName: 'fuyao-a-share', transport: 'streamable-http', url: 'https://fuyao.aicubes.cn/mcp/a-share' } });
+  loader.addEntry({ id: 'include:mcp-fuyao-2', config: { serverName: 'fuyao-fund', transport: 'streamable-http', url: 'https://fuyao.aicubes.cn/mcp/fund' } });
+  loader.addEntry({ id: 'include:mcp-custom', config: { serverName: 'custom-svc', transport: 'streamable-http', url: 'https://api.example.com/mcp' } });
+  const manager = createManager(ctx, { storePath, prefsPath: join(dirname(storePath), 'prefs.json') });
+  await manager.init();
+
+  const state = manager.state();
+  const byName = Object.fromEntries(state.apps.map((app) => [app.name, app]));
+  assert.equal(byName['高德地图'].total, 1);
+  assert.equal(byName['同花顺'].total, 2);
+  assert.ok(byName['同花顺'].serverNames.includes('fuyao-a-share'));
+  assert.equal(byName['example.com'].total, 1);
+  assert.ok(byName['高德地图'].icon);
+
+  // 手动归类：把 custom-svc 改名为「内部小工具」
+  await manager.patchPrefs('custom-svc', { app: '内部小工具' });
+  const renamed = manager.state();
+  const custom = renamed.servers.find((server) => server.serverName === 'custom-svc');
+  assert.equal(custom.app.name, '内部小工具');
+  assert.equal(custom.app.source, 'manual');
+  assert.ok(renamed.apps.some((app) => app.name === '内部小工具' && app.total === 1));
+  assert.ok(!renamed.apps.some((app) => app.name === 'example.com'));
+
+  // 清空覆盖 → 回到自动识别
+  await manager.patchPrefs('custom-svc', { app: null });
+  assert.equal(manager.state().servers.find((server) => server.serverName === 'custom-svc').app.source, 'host');
+
+  const markdown = await manager.export({ format: 'markdown' });
+  assert.match(markdown.content, /\| 应用 \|/);
+  assert.match(markdown.content, /同花顺/);
+});
+
+test('mcp_manager_apps lists grouped apps', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({ id: 'include:mcp-amap', config: { serverName: 'amap', transport: 'streamable-http', url: 'https://mcp.amap.com/mcp' } });
+  loader.addEntry({ id: 'include:mcp-qcc', config: { serverName: 'qcc-company', transport: 'streamable-http', url: 'https://agent.qcc.com/mcp/company/stream' } });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  registerTools(ctx, manager);
+  const tool = ctx.tools.defs.get('mcp_manager_apps');
+  const result = await tool.execute({});
+  assert.equal(result.apps.length, 2);
+  assert.ok(result.apps.some((app) => app.name === '高德地图' && app.total === 1));
+  assert.ok(result.apps.some((app) => app.name === '企查查' && app.serverIds.length === 1));
+  const filtered = await tool.execute({ query: '高德' });
+  assert.equal(filtered.apps.length, 1);
+});
+
+test('renameApp overrides a whole app group and can be reset', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({ id: 'include:mcp-fuyao-1', config: { serverName: 'fuyao-a-share', transport: 'streamable-http', url: 'https://fuyao.aicubes.cn/mcp/a-share' } });
+  loader.addEntry({ id: 'include:mcp-fuyao-2', config: { serverName: 'fuyao-fund', transport: 'streamable-http', url: 'https://fuyao.aicubes.cn/mcp/fund' } });
+  const manager = createManager(ctx, { storePath, prefsPath: join(dirname(storePath), 'prefs.json') });
+  await manager.init();
+
+  const renamed = await manager.renameApp('fuyao', '同花顺行情');
+  assert.equal(renamed.updated, 2);
+  const state = manager.state();
+  const group = state.apps.find((app) => app.name === '同花顺行情');
+  assert.ok(group);
+  assert.equal(group.total, 2);
+  assert.ok(group.serverNames.includes('fuyao-a-share') && group.serverNames.includes('fuyao-fund'));
+
+  // 改回已知目录名：id 会并回 fuyao
+  const back = await manager.renameApp('同花顺行情', '同花顺');
+  assert.equal(back.name, '同花顺');
+  const after = manager.state();
+  assert.equal(after.servers.find((server) => server.serverName === 'fuyao-fund').app.id, 'fuyao');
+  assert.equal(after.servers.find((server) => server.serverName === 'fuyao-fund').app.source, 'manual');
+
+  // 清除覆盖 → 自动识别（catalog）
+  await manager.renameApp('fuyao', null);
+  const reset = manager.state();
+  assert.equal(reset.servers.find((server) => server.serverName === 'fuyao-fund').app.source, 'catalog');
+  await assert.rejects(() => manager.renameApp('不存在的应用', 'x'), /找不到应用分组/);
 });

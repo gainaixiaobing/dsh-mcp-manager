@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "MCP Server Manager",
-    "description": "Lightweight manager for the MCP servers this machine already has: inspect status and tools, enable or disable, add or remove, and export a profile patch."
+    "description": "Lightweight manager for local MCP servers: group by app, health and tool inspection, live tool calls, favorites, enable/disable, add/remove, import and export."
   }
 }

@@ -210,6 +210,9 @@ test('web API action whitelist, probe shape and state size', async (t) => {
   assert.deepEqual(server.tools, []);
   assert.ok(server.toolNames.includes('echo'));
   assert.equal(payload.toolCount, payload.summary.toolCount);
+  assert.ok(Array.isArray(payload.apps));
+  assert.equal(payload.apps.length, 1);
+  assert.equal(payload.apps[0].total, 1);
 
   const exported = await callAction(route, token, 'export', { format: 'markdown' });
   assert.equal(exported.status, 200);

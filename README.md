@@ -1,7 +1,8 @@
 # dsh-mcp-manager
 
 > 一个**轻量版 MCP 服务管理器 + 调试台**：管理本机已经接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 MCP 服务，
-> 能看服务健康、浏览并在线试用工具、收藏打标签，也能从 Claude Desktop / Cursor / VS Code 等客户端扫描、导入配置。
+> 能按应用归类（高德地图 / 同花顺 / 企查查…）、看服务健康、浏览并在线试用工具、收藏打标签，
+> 也能从 Claude Desktop / Cursor / VS Code 等客户端扫描、导入配置。
 > 不做插件市场、不做远程目录、不做 OAuth 授权流——只把「本机 MCP」管好。
 
 A lightweight MCP server manager & debug console for DeepSeek Harness (DSH): inspect, enable/disable, add, edit,
@@ -12,7 +13,8 @@ convention. Zero npm dependencies.
 
 | 能力 | 入口 | 说明 |
 | --- | --- | --- |
-| 列出 MCP 服务 | `mcp_manager_list` / 设置页 | 来源（profile / 受管）、状态、传输、端点（脱敏）、工具数；支持关键词/状态过滤 |
+| 列出 MCP 服务 | `mcp_manager_list` / 设置页 | 来源（profile / 受管）、状态、传输、端点（脱敏）、工具数、所属应用；支持关键词/状态过滤 |
+| **按应用归类** | `mcp_manager_apps` / 「按应用」视图 | 自动识别应用（高德地图/同花顺/企查查/北大法宝/知乎/飞书/GitHub…），多个服务聚合成一张卡；支持重命名、恢复自动识别、应用筛选 |
 | 查看详情与工具 | `mcp_manager_inspect` / 设置页展开 | 工具名 + 说明；状态区分「已连接 / 已停用 / 无工具 / 加载失败 / 未生效」 |
 | 启用 / 停用 | `mcp_manager_set_enabled` / 开关 | 受管服务**持久化**；profile 静态行只改本次运行 |
 | 接入新服务 | `mcp_manager_add` / 新增表单 | `streamable-http` 或 `stdio`；默认写入受管存储，重启自动恢复 |
@@ -76,6 +78,8 @@ cd dsh-mcp-manager
 - 设置 → **MCP 服务**：
   - 顶部健康概览（状态计数、最近探针成功率）、「全部探测」、自动探测开关；
   - 搜索 / 状态筛选；每行可收藏、打标签、看探针历史、启停、探针、编辑、删除；
+  - 默认「按应用」视图：同花顺的 a-share/fund/meta、企查查的 company/risk/ipr… 各自聚成一张卡；
+    组头可重命名/恢复自动识别，单服务应用收在「独立服务」区；也可切回「平铺」；
   - 「工具中心」跨服务搜工具，点开工具抽屉看 schema、填参数、试跑；
   - 「新增 / 导入 / 导出」（导出支持诊断报告与「仅受管 / 含 profile 行」两种 patch 范围）。
 - 对话里也可以直接说：「列出我的 MCP 服务」「探测 qcc-company 通的吗」「qcc 有哪些查企业的工具」
@@ -94,7 +98,7 @@ cd dsh-mcp-manager
         ▲ 同源 HTTP：/mcp-manager/api/state、/action（回环 + 同源 + 进程级 token）
         │
 ┌───────┴──────── Web UI（设置页 settings.section）──────────────┐
-│ 健康概览 / 列表 / 工具中心 / 工具抽屉 / 搜索筛选 / 探针历史      │
+│ 健康概览 / 按应用分组 / 列表 / 工具中心 / 工具抽屉 / 探针历史     │
 │ 编辑（含高级项）/ 导入向导 / 导出面板 / 启停 / 收藏标签          │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -110,6 +114,7 @@ Host↔Client 的字段契约见 [`docs/v0.3-api.md`](docs/v0.3-api.md)。
 | `lib/prefs.js` | 面板偏好与探针历史（收藏/标签/备注/`ui.autoProbe`） |
 | `lib/config.js` | record 规范化（含 reconnect 等高级项）、`mcpServers` JSON 互转 |
 | `lib/inventory.js` | loader 条目 + 工具注册表 → 服务清单、状态判定、静态风险标记 |
+| `lib/apps.js` | 应用目录与归类（serverName 前缀 / URL host / stdio 包名 / 手动覆盖）、按应用聚合 |
 | `lib/provision.js` | 受管 record → `dsh-mcp-client` 条目（create/update/remove） |
 | `lib/probe.js` | MCP 握手探针（streamable-http / stdio、错误分类、历史数据） |
 | `lib/invoke.js` | 工具 schema 解析、示例参数、`ctx.tools.execute` 调用与结果折叠 |
@@ -160,10 +165,11 @@ v0.2 实现前调研了 DSH 生态 10 个 MCP 面板与 8 个通用 MCP 管理�
 | 静态风险审计（args 里的 `$()`/反引号、明文凭据） | RealZST/HarnessKit（MCP auditor 规则） |
 | 导入 dry-run 预览 + 应用前快照 + 失败回滚（部分借鉴） | xiajiajun516/dsh-config-manager |
 | 状态 chips、工具名搜索、诊断复制 | Js2Hou/dsh-mcp-manager、hyqhyq3/dsh-mcp-manager |
+| 按「应用/profile」组织服务、跨客户端归类视图 | mcpm.sh（virtual profiles）、RealZST/HarnessKit（跨 agent 归类矩阵） |
 
 > 只借鉴设计思路，未复制代码；所有实现为本仓库独立编写。
 
-### 后续（v0.4 候选，未实现）
+### 后续（v0.5 候选，未实现）
 
 - 客户端接入片段生成器（一键生成 Claude Code / Cursor / VS Code / DSH 片段）；
 - 服务套件（Kit）内置 starter kit + 空态引导；
@@ -200,6 +206,7 @@ npm test                          # 三套一起跑
 - 不做 OAuth 授权流：需要 OAuth 的服务请自行获取 token 后用 `headers`/`env` 传入；
 - 受管存储是明文 JSON（0600 权限），与 `~/.dsh/.env` 同级信任模型；不要把它提交进 git；
 - 不做 profile 文件写入器：持久化统一走「导出 patch + 手动合并」，避免插件替用户改配置；
+- 应用归类是启发式（内置目录 + URL/前缀推断），识别不准时可在面板里重命名，覆盖会持久化到偏好文件；
 - 不按工具启停/描述覆写：底层 `dsh-mcp-client` 没有工具过滤字段，本插件不伪造这层能力。
 
 ## License
