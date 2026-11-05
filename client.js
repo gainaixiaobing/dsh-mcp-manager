@@ -77,7 +77,7 @@ window.__ModuleLoader__.load({
       duplicate: '同名',
       duplicateHint: '该服务被多个条目重复声明（profile 静态行 + 受管记录），共享同一工具命名空间；启停请以条目 id/来源区分。',
       summary: '{total} 个条目 · 唯一服务 {unique} 个 · 受管 {managed} 条 · {enabled} 启用 / {connected} 已连接 / {disabled} 停用 · 工具 {tools} 个',
-      toolCount: '{count} 个',
+      toolCount: '{count} 个工具',
       showTools: '查看工具',
       hideTools: '收起工具',
       noTools: '没有已注册的工具（可能连接失败或服务本身不提供工具）',
@@ -302,7 +302,7 @@ window.__ModuleLoader__.load({
       duplicate: 'duplicate',
       duplicateHint: 'This server is declared by multiple entries sharing one tool namespace; use the entry id/source to tell them apart.',
       summary: '{total} entries · {unique} unique servers · {managed} managed · {enabled} enabled / {connected} connected / {disabled} disabled · {tools} tools',
-      toolCount: '{count}',
+      toolCount: '{count} tools',
       showTools: 'Show tools',
       hideTools: 'Hide tools',
       noTools: 'No tool is registered (connection may have failed, or the server exposes none)',
@@ -540,7 +540,7 @@ window.__ModuleLoader__.load({
       },
       primaryButton: {
         appearance: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
-        border: '1px solid transparent', background: 'var(--dsw-alias-brand-primary, #4d6bfe)', color: '#fff',
+        border: '1px solid transparent', background: 'var(--dsw-alias-label-primary, #111)', color: 'var(--dsw-alias-bg-base, #fff)',
         borderRadius: '9px', padding: '0 12px', height: '29px', fontSize: '12px', lineHeight: '1', fontWeight: 600,
         cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap', boxSizing: 'border-box',
       },
@@ -580,7 +580,7 @@ window.__ModuleLoader__.load({
       table: { display: 'flex', flexDirection: 'column' },
       row: { borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.12))' },
       rowMain: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '8px 12px', padding: '12px 14px' },
-      rowIdentity: { flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' },
+      rowIdentity: { flex: '1 1 230px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' },
       rowNameLine: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
       rowMetaLine: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', minWidth: 0 },
       rowMetaChip: {
@@ -591,7 +591,7 @@ window.__ModuleLoader__.load({
       rowStatus: { flex: '0 0 auto', paddingTop: '1px' },
       rowActionsCell: { flex: '0 0 auto', marginLeft: 'auto', display: 'flex', alignItems: 'center' },
       serverName: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      endpoint: { fontFamily: FONT_MONO, fontSize: '10.5px', lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      endpoint: { fontFamily: FONT_MONO, fontSize: '10.5px', lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '0 1 auto', minWidth: 0 },
       badge: {
         display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', fontWeight: 550,
         whiteSpace: 'nowrap', borderRadius: '999px', padding: '2px 8px', border: '1px solid transparent',
@@ -610,7 +610,7 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', color: 'inherit', cursor: 'pointer',
       },
       actions: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px' },
-      rowButton: { height: '27px', padding: '0 8px', fontSize: '11.5px' },
+      rowButton: { height: '26px', padding: '0 8px', fontSize: '11px' },
       switchButton: {
         appearance: 'none', border: '1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.28))', borderRadius: '999px',
         width: '36px', height: '20px', padding: 0, cursor: 'pointer', position: 'relative', background: 'transparent', flex: 'none',
@@ -708,10 +708,10 @@ window.__ModuleLoader__.load({
       groupIcon: { width: '30px', height: '30px', borderRadius: '9px', display: 'grid', placeItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.1))', fontSize: '16px', lineHeight: '1', flex: 'none' },
       groupText: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 },
       groupNameRow: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
-      groupMetaRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' },
+      groupMetaRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '7px' },
       groupName: { fontWeight: 600, fontSize: '13.5px', lineHeight: '19px' },
       groupMeta: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' },
-      chevron: { fontSize: '9px', color: 'var(--dsw-alias-label-secondary)', marginLeft: '2px', flex: 'none', opacity: 0.9 },
+      chevron: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginLeft: '6px', flex: 'none', width: '12px', textAlign: 'center' },
       groupBody: { borderTop: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.12))', padding: 0 },
       renameRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '0 12px 12px' },
       emptyState: {
@@ -731,7 +731,7 @@ window.__ModuleLoader__.load({
 .mcpmm-root input:focus,.mcpmm-root textarea:focus,.mcpmm-root select:focus{border-color:var(--mcpmm-brand)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--mcpmm-brand) 16%,transparent)}
 .mcpmm-btn:hover:not(:disabled){background:var(--mcpmm-bg-2)!important;border-color:var(--mcpmm-border-strong)!important}
 .mcpmm-btn:disabled{opacity:.55;cursor:default}
-.mcpmm-btn--primary:hover:not(:disabled){background:var(--mcpmm-brand)!important;border-color:transparent!important;filter:brightness(1.08)}
+.mcpmm-btn--primary:hover:not(:disabled){background:var(--dsw-alias-label-primary, #111)!important;border-color:transparent!important;opacity:.9}
 .mcpmm-link:hover{color:var(--mcpmm-text)!important;text-decoration:underline!important}
 .mcpmm-row{transition:background-color .14s ease}
 .mcpmm-row:hover{background:var(--mcpmm-bg-2)}
@@ -743,6 +743,7 @@ window.__ModuleLoader__.load({
 .mcpmm-root input::placeholder,.mcpmm-root textarea::placeholder{color:var(--mcpmm-text-2);opacity:.72}
 .mcpmm-root button[aria-pressed].mcpmm-chip:hover,.mcpmm-root button.mcpmm-chip:hover{border-color:var(--mcpmm-border-strong)!important}
 .mcpmm-stat[aria-pressed="false"]:hover{background:var(--mcpmm-bg-2)!important}
+.mcpmm-meta + .mcpmm-meta::before{content:'·';margin-right:7px;opacity:.55}
 .mcpmm-overlay{animation:mcpmm-fade .16s ease}
 .mcpmm-drawer{animation:mcpmm-pop .18s ease}
 .mcpmm-seg button{border:1px solid transparent!important;background:transparent!important;border-radius:8px!important;height:26px!important;padding:0 12px!important;color:var(--mcpmm-text-2)!important;box-shadow:none!important;font-weight:500!important}
@@ -1166,11 +1167,27 @@ window.__ModuleLoader__.load({
       const returned = Number.isFinite(Number(catalog?.returned)) ? Number(catalog.returned) : tools.length;
       const truncated = catalog?.truncated === true;
 
-      return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
-        h('div', { style: styles.healthRow },
+      return h('div', {
+        className: 'mcpmm-card mcpmm-panel',
+        style: open ? styles.panel : { ...styles.panel, padding: '11px 14px', gap: '0px' },
+      },
+        h('div', {
+          style: open
+            ? { ...styles.healthRow, paddingBottom: '10px', borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))' }
+            : styles.healthRow,
+        },
           h('button', {
             type: 'button',
-            className: 'mcpmm-link', style: styles.link,
+            className: 'mcpmm-link',
+            style: {
+              ...styles.link,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: 'var(--dsw-alias-label-primary)',
+            },
             'aria-expanded': open === true,
             onClick: () => setOpen((value) => !value),
           }, `${open ? '▾' : '▸'} ${t('tools.center')}`),
@@ -2029,9 +2046,9 @@ window.__ModuleLoader__.load({
               h('span', { style: styles.groupName }, name),
               source === 'manual' ? h(Tag, null, t('apps.manual')) : null),
             h('span', { style: styles.groupMetaRow },
-              h('span', { style: styles.groupMeta }, format(t, 'apps.services', { count: total })),
-              h('span', { style: styles.groupMeta }, format(t, 'apps.healthSummary', { connected, failed, disabled })),
-              h('span', { style: styles.groupMeta }, format(t, 'toolCount', { count: toolCount })))),
+              h('span', { className: 'mcpmm-meta', style: styles.groupMeta }, format(t, 'apps.services', { count: total })),
+              h('span', { className: 'mcpmm-meta', style: styles.groupMeta }, format(t, 'apps.healthSummary', { connected, failed, disabled })),
+              h('span', { className: 'mcpmm-meta', style: styles.groupMeta }, format(t, 'toolCount', { count: toolCount })))),
           h('span', { style: styles.chevron, 'aria-hidden': 'true' }, collapsed === true ? '▸' : '▾')),
           h('div', { style: styles.actions },
             h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: startRename, disabled: busy }, t('apps.rename')),
@@ -2175,11 +2192,11 @@ window.__ModuleLoader__.load({
           h('div', { style: styles.rowStatus, role: 'cell' }, h(Badge, { t, status: server.status })),
           h('div', { style: styles.rowActionsCell, role: 'cell' },
             h('div', { style: styles.actions },
-              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onProbe, disabled: busy }, busy ? t('probing') : t('probe')),
-              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onEdit }, t('edit')),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: { ...styles.button, ...styles.rowButton }, onClick: onProbe, disabled: busy }, busy ? t('probing') : t('probe')),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: { ...styles.button, ...styles.rowButton }, onClick: onEdit }, t('edit')),
               h('button', {
                 type: 'button',
-                className: 'mcpmm-btn', style: styles.button,
+                className: 'mcpmm-btn', style: { ...styles.button, ...styles.rowButton },
                 onClick: () => (confirming ? onRemove() : setConfirming(true)),
                 onBlur: () => setConfirming(false),
               }, confirming ? t('confirmRemove') : t('remove')),
