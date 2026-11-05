@@ -371,6 +371,23 @@ test('renders the server table with source/status/tool counts and store path', a
   assert.match(text, /\/tmp\/prefs\.json/);
 });
 
+test('renders a scoped design-token stylesheet with current theme variables', async () => {
+  mockFetch();
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  const tree = draw();
+  const style = flatten(tree).find((node) => node.type === 'style');
+  assert.ok(style, 'panel should carry a scoped <style> element');
+  const css = textOf(style);
+  assert.match(css, /\.mcpmm-root/);
+  assert.match(css, /--dsw-alias-bg-layer-1/);
+  assert.match(css, /--dsw-alias-state-success-primary/);
+  // 旧主题 token 已不存在，退回写死灰度正是「面板发灰」的根因，这里加个回归断言。
+  assert.doesNotMatch(css, /--dsw-alias-bg-l2/);
+  assert.doesNotMatch(css, /--dsw-alias-status-/);
+});
+
 test('toggling a server posts setEnabled with the entry id (not serverName)', async () => {
   const { posts } = mockFetch({ action: async () => ({ ok: true }) });
   const { draw } = mountSection();

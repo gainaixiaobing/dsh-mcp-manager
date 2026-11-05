@@ -70,6 +70,7 @@ window.__ModuleLoader__.load({
       loading: '读取中…',
       empty: '当前没有匹配的 MCP 服务。',
       errorApi: '管理 API 不可用，请确认 dsh-mcp-manager 已启用且 webApi 为 true。',
+      reloadPage: '重新加载页面',
       column: { server: '服务', status: '状态', transport: '传输', tools: '工具', actions: '操作' },
       status: { connected: '已连接', disabled: '已停用', 'no-tools': '无工具', failed: '加载失败', 'not-provisioned': '未生效' },
       origin: { profile: 'profile', managed: '受管' },
@@ -294,6 +295,7 @@ window.__ModuleLoader__.load({
       loading: 'Loading…',
       empty: 'No matching MCP server.',
       errorApi: 'Management API unavailable. Check that dsh-mcp-manager is enabled and webApi is true.',
+      reloadPage: 'Reload page',
       column: { server: 'Server', status: 'Status', transport: 'Transport', tools: 'Tools', actions: 'Actions' },
       status: { connected: 'Connected', disabled: 'Disabled', 'no-tools': 'No tools', failed: 'Failed', 'not-provisioned': 'Not provisioned' },
       origin: { profile: 'profile', managed: 'managed' },
@@ -510,123 +512,259 @@ window.__ModuleLoader__.load({
       },
     };
 
+    const FONT_MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+
+    /**
+     * 设计令牌：只使用宿主主题变量（--dsw-alias-*），旧版 token 名（bg-l2 / status-success）
+     * 在 v0.2.x 主题里已不存在，会退化成写死的灰度，这正是面板看起来「脏、糙」的主要原因。
+     */
     const styles = {
-      root: { display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '900px', color: 'var(--dsw-alias-label-primary)', fontSize: '14px', lineHeight: '22px' },
-      header: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' },
-      title: { margin: 0, fontSize: '16px', fontWeight: 600 },
-      subtitle: { margin: '6px 0 0', fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' },
+      root: { display: 'flex', flexDirection: 'column', gap: '14px', maxWidth: '960px', color: 'var(--dsw-alias-label-primary)', fontSize: '13px', lineHeight: '20px' },
+      header: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', paddingBottom: '14px', borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))' },
+      headerMain: { display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 },
+      headerText: { minWidth: 0 },
+      headerActions: { display: 'flex', alignItems: 'center', gap: '8px', flex: 'none' },
+      brandMark: {
+        width: '34px', height: '34px', borderRadius: '10px', display: 'grid', placeItems: 'center', flex: 'none',
+        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 14%, transparent)',
+        color: 'var(--dsw-alias-brand-primary, #4d6bfe)', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.05em',
+      },
+      title: { margin: 0, fontSize: '18px', lineHeight: '24px', fontWeight: 650, letterSpacing: '-.01em' },
+      subtitle: { margin: '4px 0 0', fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)', maxWidth: '640px' },
       button: {
-        appearance: 'none', border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'inherit',
-        borderRadius: '8px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap',
+        appearance: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2))',
+        background: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,.06))',
+        color: 'inherit', borderRadius: '9px', padding: '0 11px', height: '29px', fontSize: '12px', lineHeight: '1',
+        cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap', boxSizing: 'border-box',
       },
       primaryButton: {
-        appearance: 'none', border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-l2, rgba(127,127,127,.12))',
-        color: 'inherit', borderRadius: '8px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap',
+        appearance: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+        border: '1px solid transparent', background: 'var(--dsw-alias-brand-primary, #4d6bfe)', color: '#fff',
+        borderRadius: '9px', padding: '0 12px', height: '29px', fontSize: '12px', lineHeight: '1', fontWeight: 600,
+        cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap', boxSizing: 'border-box',
       },
-      toolbar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' },
+      chip: {
+        appearance: 'none', display: 'inline-flex', alignItems: 'center', gap: '5px', height: '26px',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2))', background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)', borderRadius: '999px', padding: '0 10px', fontSize: '11.5px',
+        cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap',
+      },
+      chipActive: {
+        appearance: 'none', display: 'inline-flex', alignItems: 'center', gap: '5px', height: '26px',
+        border: '1px solid color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 55%, transparent)',
+        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 12%, transparent)',
+        color: 'var(--dsw-alias-brand-primary, #4d6bfe)', borderRadius: '999px', padding: '0 10px',
+        fontSize: '11.5px', fontWeight: 550, cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap',
+      },
+      toolbar: {
+        display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '10px 12px',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', borderRadius: '12px',
+        background: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,.05))',
+      },
       input: {
-        font: 'inherit', fontSize: '13px', color: 'inherit', background: 'transparent',
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', padding: '4px 8px', minWidth: 0,
+        font: 'inherit', fontSize: '12.5px', color: 'inherit', background: 'var(--dsw-alias-bg-base, transparent)',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2))', borderRadius: '9px',
+        padding: '0 10px', height: '30px', minWidth: 0, boxSizing: 'border-box',
       },
       textarea: {
-        font: 'inherit', fontSize: '12px', color: 'inherit', background: 'transparent',
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', padding: '6px 8px', width: '100%', boxSizing: 'border-box', resize: 'vertical',
+        font: 'inherit', fontSize: '12px', lineHeight: '1.6', color: 'inherit', background: 'var(--dsw-alias-bg-base, transparent)',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2))', borderRadius: '9px',
+        padding: '8px 10px', width: '100%', boxSizing: 'border-box', resize: 'vertical',
       },
-      summary: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
-      hint: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', margin: 0 },
-      error: { fontSize: '12px', color: 'var(--dsw-alias-state-error-primary, #d0563b)', margin: 0, whiteSpace: 'pre-wrap' },
-      ok: { fontSize: '12px', color: 'var(--dsw-alias-status-success, #2f9e6e)', margin: 0, whiteSpace: 'pre-wrap' },
-      warning: { fontSize: '12px', color: 'var(--dsw-alias-status-warning, #d08b24)', margin: 0, whiteSpace: 'pre-wrap' },
-      table: { display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--dsw-alias-border-l2)' },
-      row: { borderBottom: '1px solid var(--dsw-alias-border-l2)' },
-      rowMain: { display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) 86px 96px 104px 200px', alignItems: 'center', gap: '10px', padding: '10px 2px' },
-      serverName: { fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      endpoint: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      badge: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', whiteSpace: 'nowrap' },
-      dot: { width: '8px', height: '8px', borderRadius: '50%', flex: 'none' },
-      tag: { fontSize: '11px', padding: '0 6px', borderRadius: '999px', border: '1px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-secondary)', marginLeft: '6px', flex: 'none' },
-      link: { appearance: 'none', border: 0, background: 'transparent', padding: 0, fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' },
-      toolList: { display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '0 2px 10px' },
+      summary: { fontSize: '11.5px', color: 'var(--dsw-alias-label-secondary)' },
+      hint: { fontSize: '11.5px', lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)', margin: 0 },
+      error: { fontSize: '11.5px', lineHeight: '18px', color: 'var(--dsw-alias-state-error-primary, #d0563b)', margin: 0, whiteSpace: 'pre-wrap' },
+      ok: { fontSize: '11.5px', lineHeight: '18px', color: 'var(--dsw-alias-state-success-primary, #2f9e6e)', margin: 0, whiteSpace: 'pre-wrap' },
+      warning: { fontSize: '11.5px', lineHeight: '18px', color: 'var(--dsw-alias-state-warn-primary, #d08b24)', margin: 0, whiteSpace: 'pre-wrap' },
+      table: { display: 'flex', flexDirection: 'column' },
+      row: { borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.12))' },
+      rowMain: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '8px 12px', padding: '12px 14px' },
+      rowIdentity: { flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' },
+      rowNameLine: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
+      rowMetaLine: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', minWidth: 0 },
+      rowMetaChip: {
+        fontFamily: FONT_MONO, fontSize: '10px', lineHeight: '16px', padding: '0 6px', borderRadius: '5px',
+        background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12))', color: 'var(--dsw-alias-label-secondary)',
+      },
+      rowMetaText: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' },
+      rowStatus: { flex: '0 0 auto', paddingTop: '1px' },
+      rowActionsCell: { flex: '0 0 auto', marginLeft: 'auto', display: 'flex', alignItems: 'center' },
+      serverName: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      endpoint: { fontFamily: FONT_MONO, fontSize: '10.5px', lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      badge: {
+        display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', fontWeight: 550,
+        whiteSpace: 'nowrap', borderRadius: '999px', padding: '2px 8px', border: '1px solid transparent',
+      },
+      dot: { width: '6px', height: '6px', borderRadius: '50%', flex: 'none' },
+      tag: {
+        display: 'inline-flex', alignItems: 'center', fontSize: '10.5px', lineHeight: '16px', padding: '0 7px',
+        borderRadius: '999px', border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2))',
+        color: 'var(--dsw-alias-label-secondary)', marginLeft: 0, flex: 'none',
+      },
+      link: { appearance: 'none', border: 0, background: 'transparent', padding: 0, fontSize: '11.5px', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', font: 'inherit', textDecoration: 'none' },
+      toolList: { display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '0 14px 12px' },
       toolChip: {
-        font: 'inherit', fontSize: '12px', padding: '2px 8px', borderRadius: '999px', background: 'var(--dsw-alias-bg-l2, rgba(127,127,127,.12))',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', border: 0, color: 'inherit', cursor: 'pointer',
+        font: 'inherit', fontSize: '10.5px', lineHeight: '18px', padding: '1px 8px', borderRadius: '7px',
+        background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.1))', fontFamily: FONT_MONO,
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', color: 'inherit', cursor: 'pointer',
       },
-      actions: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '6px' },
+      actions: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px' },
+      rowButton: { height: '27px', padding: '0 8px', fontSize: '11.5px' },
       switchButton: {
-        appearance: 'none', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '999px', width: '40px', height: '22px',
-        padding: 0, cursor: 'pointer', position: 'relative', background: 'transparent', flex: 'none',
+        appearance: 'none', border: '1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.28))', borderRadius: '999px',
+        width: '36px', height: '20px', padding: 0, cursor: 'pointer', position: 'relative', background: 'transparent', flex: 'none',
       },
-      knob: { position: 'absolute', top: '2px', width: '16px', height: '16px', borderRadius: '50%', transition: 'left .15s ease' },
+      knob: { position: 'absolute', top: '2px', width: '14px', height: '14px', borderRadius: '50%', transition: 'left .16s ease' },
       panel: {
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '10px', padding: '12px',
-        display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--dsw-alias-bg-l2, rgba(127,127,127,.06))',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', borderRadius: '14px', padding: '16px',
+        display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,.05))',
       },
-      panelTitle: { margin: 0, fontSize: '14px', fontWeight: 600 },
-      field: { display: 'flex', flexDirection: 'column', gap: '4px' },
-      fieldRow: { display: 'flex', gap: '10px', flexWrap: 'wrap' },
-      label: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
-      code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px', whiteSpace: 'pre-wrap', margin: 0, maxHeight: '260px', overflow: 'auto' },
+      panelTitle: { margin: 0, fontSize: '14px', fontWeight: 600, lineHeight: '20px' },
+      field: { display: 'flex', flexDirection: 'column', gap: '6px' },
+      fieldRow: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' },
+      label: { fontSize: '11.5px', fontWeight: 500, color: 'var(--dsw-alias-label-secondary)' },
+      code: {
+        fontFamily: FONT_MONO, fontSize: '11px', lineHeight: '1.55', whiteSpace: 'pre-wrap', margin: 0, maxHeight: '260px',
+        overflow: 'auto', background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.08))',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', borderRadius: '10px', padding: '10px 12px',
+      },
       candidateList: { display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflow: 'auto' },
       candidate: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' },
       // v0.3 新增
-      star: { appearance: 'none', border: 0, background: 'transparent', padding: '0 2px', font: 'inherit', fontSize: '14px', lineHeight: '18px', cursor: 'pointer', flex: 'none' },
+      star: { appearance: 'none', border: 0, background: 'transparent', padding: '0 2px', font: 'inherit', fontSize: '15px', lineHeight: '18px', cursor: 'pointer', flex: 'none' },
       health: {
-        display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 12px',
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '10px',
+        display: 'flex', flexDirection: 'column', gap: '12px', padding: '14px',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', borderRadius: '14px',
+        background: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,.05))',
       },
-      healthRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' },
+      healthTop: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' },
+      healthRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' },
+      rateText: { fontSize: '11.5px', color: 'var(--dsw-alias-label-secondary)' },
+      healthSpacer: { flex: '1 1 auto' },
+      autoProbe: { display: 'inline-flex', alignItems: 'center', gap: '8px' },
+      statRow: { display: 'flex', flexWrap: 'wrap', gap: '8px' },
+      statTile: {
+        appearance: 'none', font: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '8px',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))',
+        background: 'var(--dsw-alias-bg-base, transparent)', color: 'inherit', borderRadius: '10px',
+        padding: '6px 11px', cursor: 'pointer', textAlign: 'left',
+      },
+      statTileActive: {
+        borderColor: 'var(--dsw-alias-brand-primary, #4d6bfe)',
+        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 10%, transparent)',
+      },
+      statCount: { fontSize: '15px', lineHeight: '18px', fontWeight: 650, fontVariantNumeric: 'tabular-nums' },
+      statLabel: { display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' },
       history: { display: 'inline-flex', gap: '3px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' },
-      historyDot: { width: '7px', height: '7px', borderRadius: '50%', display: 'inline-block', flex: 'none' },
+      historyDot: { width: '6px', height: '6px', borderRadius: '50%', display: 'inline-block', flex: 'none' },
       tagRow: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px', marginTop: '2px' },
-      noteBox: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'pre-wrap', margin: '2px 0 0' },
+      noteBox: { fontSize: '11.5px', color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'pre-wrap', margin: '2px 0 0' },
       inlineRow: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
-      advanced: { display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--dsw-alias-border-l2)', paddingTop: '8px' },
+      advanced: { display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.14))', paddingTop: '10px' },
       toolRow: {
         display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'left', alignItems: 'flex-start',
-        appearance: 'none', border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'inherit',
-        borderRadius: '8px', padding: '6px 8px', cursor: 'pointer', font: 'inherit', width: '100%',
+        appearance: 'none', border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))',
+        background: 'var(--dsw-alias-bg-base, transparent)', color: 'inherit', borderRadius: '10px',
+        padding: '7px 10px', cursor: 'pointer', font: 'inherit', width: '100%', boxSizing: 'border-box',
       },
-      toolRowName: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' },
-      toolListBox: { display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '320px', overflow: 'auto' },
-      overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '24px', boxSizing: 'border-box' },
+      toolRowName: { fontFamily: FONT_MONO, fontSize: '11.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' },
+      toolListBox: { display: 'flex', flexDirection: 'column', gap: '5px', maxHeight: '360px', overflow: 'auto' },
+      overlay: {
+        position: 'fixed', inset: 0, background: 'rgba(8, 10, 16, .55)', backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 1000, padding: '24px', boxSizing: 'border-box',
+      },
       drawer: {
-        width: 'min(760px, 92vw)', maxHeight: '92vh', overflow: 'auto', boxSizing: 'border-box',
-        background: 'var(--dsw-alias-bg-primary, #fff)', color: 'var(--dsw-alias-label-primary)',
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '12px', padding: '16px',
-        display: 'flex', flexDirection: 'column', gap: '10px', boxShadow: '0 12px 40px rgba(0,0,0,.28)',
+        width: 'min(820px, 92vw)', maxHeight: '88vh', overflow: 'auto', boxSizing: 'border-box',
+        background: 'var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-1, #1c1d22))', color: 'var(--dsw-alias-label-primary)',
+        border: '1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.3))', borderRadius: '16px', padding: '20px',
+        display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 28px 80px rgba(0,0,0,.42)',
       },
       drawerHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' },
       resultPre: {
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px', whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word', margin: 0, maxHeight: '320px', overflow: 'auto',
-        background: 'var(--dsw-alias-bg-l2, rgba(127,127,127,.08))', borderRadius: '8px', padding: '8px',
+        fontFamily: FONT_MONO, fontSize: '11.5px', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        margin: 0, maxHeight: '340px', overflow: 'auto', background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.1))',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', borderRadius: '10px', padding: '10px 12px',
       },
       scopeRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', fontSize: '12px' },
-      notice: { fontSize: '12px', padding: '6px 10px', borderRadius: '8px', margin: 0 },
+      notice: { fontSize: '12px', padding: '8px 12px', borderRadius: '10px', margin: 0 },
       // v0.4 按应用视图
-      viewBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' },
-      groupCard: {
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '10px',
-        background: 'var(--dsw-alias-bg-l2, rgba(127,127,127,.06))', overflow: 'hidden',
+      viewBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', rowGap: '8px' },
+      viewGroup: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
+      segmented: {
+        display: 'inline-flex', alignItems: 'center', gap: '2px', padding: '3px', borderRadius: '10px',
+        background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.1))',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.14))',
       },
-      groupHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 10px' },
+      filterChips: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' },
+      groupCard: { border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))', borderRadius: '14px', background: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,.05))', overflow: 'hidden' },
+      groupHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px' },
       groupToggle: {
         appearance: 'none', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer',
-        font: 'inherit', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: 0, textAlign: 'left',
+        font: 'inherit', display: 'flex', alignItems: 'center', gap: '10px', padding: 0, textAlign: 'left',
+        flex: '1 1 auto', minWidth: 0,
       },
-      groupIcon: { fontSize: '18px', lineHeight: '20px' },
-      groupName: { fontWeight: 600, fontSize: '14px' },
-      groupMeta: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
-      groupBody: { borderTop: '1px solid var(--dsw-alias-border-l2)', padding: '0 10px' },
-      renameRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '0 10px 10px' },
+      groupIcon: { width: '30px', height: '30px', borderRadius: '9px', display: 'grid', placeItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.1))', fontSize: '16px', lineHeight: '1', flex: 'none' },
+      groupText: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 },
+      groupNameRow: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
+      groupMetaRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' },
+      groupName: { fontWeight: 600, fontSize: '13.5px', lineHeight: '19px' },
+      groupMeta: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' },
+      chevron: { fontSize: '9px', color: 'var(--dsw-alias-label-secondary)', marginLeft: '2px', flex: 'none', opacity: 0.9 },
+      groupBody: { borderTop: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.12))', padding: 0 },
+      renameRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '0 12px 12px' },
+      emptyState: {
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', padding: '32px 16px',
+        border: '1px dashed var(--dsw-alias-border-l2, rgba(127,127,127,.3))', borderRadius: '14px',
+        color: 'var(--dsw-alias-label-secondary)', textAlign: 'center',
+      },
+      emptyIcon: { fontSize: '22px', lineHeight: '26px', opacity: 0.85 },
+      emptyText: { margin: 0, fontSize: '12.5px', lineHeight: '19px' },
     };
 
+    /** 交互态（hover / focus / 动画）只能交给样式表：内联 style 无法表达伪类。 */
+    const MCP_CSS = `
+.mcpmm-root{--mcpmm-text:var(--dsw-alias-label-primary,inherit);--mcpmm-text-2:var(--dsw-alias-label-secondary,#8a8a8a);--mcpmm-bg-1:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.06));--mcpmm-bg-2:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.11));--mcpmm-bg-base:var(--dsw-alias-bg-base,transparent);--mcpmm-border:var(--dsw-alias-border-l1,rgba(127,127,127,.16));--mcpmm-border-strong:var(--dsw-alias-border-l2,rgba(127,127,127,.3));--mcpmm-brand:var(--dsw-alias-brand-primary,#4d6bfe);--mcpmm-success:var(--dsw-alias-state-success-primary,#2f9e6e);--mcpmm-warn:var(--dsw-alias-state-warn-primary,#d08b24);--mcpmm-error:var(--dsw-alias-state-error-primary,#d0563b);--mcpmm-idle:var(--dsw-alias-state-idle-primary,#8a8a8a)}
+.mcpmm-root button{font:inherit;transition:background-color .16s ease,border-color .16s ease,color .16s ease,opacity .16s ease}
+.mcpmm-root button:focus-visible,.mcpmm-root input:focus-visible,.mcpmm-root textarea:focus-visible,.mcpmm-root select:focus-visible{outline:2px solid var(--mcpmm-brand);outline-offset:2px}
+.mcpmm-root input:focus,.mcpmm-root textarea:focus,.mcpmm-root select:focus{border-color:var(--mcpmm-brand)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--mcpmm-brand) 16%,transparent)}
+.mcpmm-btn:hover:not(:disabled){background:var(--mcpmm-bg-2)!important;border-color:var(--mcpmm-border-strong)!important}
+.mcpmm-btn:disabled{opacity:.55;cursor:default}
+.mcpmm-btn--primary:hover:not(:disabled){background:var(--mcpmm-brand)!important;border-color:transparent!important;filter:brightness(1.08)}
+.mcpmm-link:hover{color:var(--mcpmm-text)!important;text-decoration:underline!important}
+.mcpmm-row{transition:background-color .14s ease}
+.mcpmm-row:hover{background:var(--mcpmm-bg-2)}
+.mcpmm-row:last-child{border-bottom:0!important}
+.mcpmm-group-header:hover{background:var(--mcpmm-bg-2)}
+.mcpmm-stat:hover{background:var(--mcpmm-bg-2)!important;border-color:var(--mcpmm-border-strong)!important}
+.mcpmm-tool-row:hover{background:var(--mcpmm-bg-2)!important;border-color:var(--mcpmm-border-strong)!important}
+.mcpmm-tool-chip:hover{background:var(--mcpmm-bg-2)!important;border-color:var(--mcpmm-border-strong)!important}
+.mcpmm-root input::placeholder,.mcpmm-root textarea::placeholder{color:var(--mcpmm-text-2);opacity:.72}
+.mcpmm-root button[aria-pressed].mcpmm-chip:hover,.mcpmm-root button.mcpmm-chip:hover{border-color:var(--mcpmm-border-strong)!important}
+.mcpmm-stat[aria-pressed="false"]:hover{background:var(--mcpmm-bg-2)!important}
+.mcpmm-overlay{animation:mcpmm-fade .16s ease}
+.mcpmm-drawer{animation:mcpmm-pop .18s ease}
+.mcpmm-seg button{border:1px solid transparent!important;background:transparent!important;border-radius:8px!important;height:26px!important;padding:0 12px!important;color:var(--mcpmm-text-2)!important;box-shadow:none!important;font-weight:500!important}
+.mcpmm-seg button[aria-pressed="true"]{background:var(--mcpmm-bg-base)!important;color:var(--mcpmm-text)!important;border-color:var(--mcpmm-border)!important;font-weight:600!important}
+.mcpmm-seg button:hover{background:transparent!important;color:var(--mcpmm-text)!important;border-color:var(--mcpmm-border)!important}
+.mcpmm-root ::-webkit-scrollbar{width:9px;height:9px}
+.mcpmm-root ::-webkit-scrollbar-thumb{background:var(--mcpmm-border-strong);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+.mcpmm-root ::-webkit-scrollbar-track{background:transparent}
+@keyframes mcpmm-fade{from{opacity:0}to{opacity:1}}
+@keyframes mcpmm-pop{from{opacity:0;transform:translateY(6px) scale(.99)}to{opacity:1;transform:none}}
+`;
+
+    function StyleTag() {
+      return h('style', { 'data-mcp-manager': 'panel-styles' }, MCP_CSS);
+    }
+
     const STATUS_COLORS = {
-      connected: 'var(--dsw-alias-status-success, #2f9e6e)',
-      disabled: 'var(--dsw-alias-label-secondary, #8a8a8a)',
-      'no-tools': 'var(--dsw-alias-status-warning, #d08b24)',
+      connected: 'var(--dsw-alias-state-success-primary, #2f9e6e)',
+      disabled: 'var(--dsw-alias-state-idle-primary, #8a8a8a)',
+      'no-tools': 'var(--dsw-alias-state-warn-primary, #d08b24)',
       failed: 'var(--dsw-alias-state-error-primary, #d0563b)',
-      'not-provisioned': 'var(--dsw-alias-status-warning, #d08b24)',
+      'not-provisioned': 'var(--dsw-alias-state-warn-primary, #d08b24)',
     };
 
     // ── 基础设施 ────────────────────────────────────────────────────────────
@@ -853,13 +991,20 @@ window.__ModuleLoader__.load({
 
     function Badge({ t, status }) {
       const color = STATUS_COLORS[status] ?? STATUS_COLORS.disabled;
-      return h('span', { style: styles.badge },
-        h('span', { style: { ...styles.dot, background: color } }),
-        h('span', null, t(`status.${status}`)));
+      return h('span', {
+        style: {
+          ...styles.badge,
+          color,
+          background: `color-mix(in srgb, ${color} 14%, transparent)`,
+          borderColor: `color-mix(in srgb, ${color} 30%, transparent)`,
+        },
+      },
+      h('span', { style: { ...styles.dot, background: color } }),
+      h('span', null, t(`status.${status}`)));
     }
 
     function Tag({ children, title }) {
-      return h('span', { style: styles.tag, title }, children);
+      return h('span', { style: styles.tag, title, className: 'mcpmm-tag' }, children);
     }
 
     function Switch({ t, enabled, busy, onToggle, ariaLabel }) {
@@ -871,17 +1016,26 @@ window.__ModuleLoader__.load({
         'aria-label': label,
         title: label,
         disabled: busy,
+        className: 'mcpmm-switch',
         style: {
           ...styles.switchButton,
-          background: enabled ? 'var(--dsw-alias-status-success, #2f9e6e)' : 'transparent',
+          background: enabled ? 'var(--dsw-alias-state-success-primary, #2f9e6e)' : 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,.16))',
+          borderColor: enabled ? 'transparent' : 'var(--dsw-alias-border-l2, rgba(127,127,127,.3))',
           opacity: busy ? 0.5 : 1,
         },
         onClick: onToggle,
-      }, h('span', { style: { ...styles.knob, left: enabled ? '20px' : '3px', background: enabled ? '#fff' : 'var(--dsw-alias-label-secondary)' } }));
+      }, h('span', {
+        style: {
+          ...styles.knob,
+          left: enabled ? '19px' : '2px',
+          background: enabled ? '#fff' : 'var(--dsw-alias-label-secondary, #8a8a8a)',
+          boxShadow: '0 1px 2px rgba(0,0,0,.28)',
+        },
+      }));
     }
 
     function Field({ label, hint, children }) {
-      return h('label', { style: styles.field },
+      return h('label', { style: styles.field, className: 'mcpmm-field' },
         h('span', { style: styles.label }, label),
         children,
         hint ? h('span', { style: styles.hint }, hint) : null);
@@ -895,7 +1049,12 @@ window.__ModuleLoader__.load({
         'aria-label': label,
         title: label,
         disabled: busy,
-        style: { ...styles.star, color: pinned ? 'var(--dsw-alias-status-warning, #d08b24)' : 'var(--dsw-alias-label-secondary)', opacity: busy ? 0.5 : 1 },
+        className: 'mcpmm-pin',
+        style: {
+          ...styles.star,
+          color: pinned ? 'var(--dsw-alias-state-warn-primary, #d08b24)' : 'var(--dsw-alias-label-secondary, #8a8a8a)',
+          opacity: busy ? 0.5 : (pinned ? 1 : 0.55),
+        },
         onClick: onToggle,
       }, pinned ? '★' : '☆');
     }
@@ -913,7 +1072,10 @@ window.__ModuleLoader__.load({
           return h('span', {
             key: index,
             title,
-            style: { ...styles.historyDot, background: ok ? 'var(--dsw-alias-status-success, #2f9e6e)' : 'var(--dsw-alias-state-error-primary, #d0563b)' },
+            style: {
+              ...styles.historyDot,
+              background: ok ? 'var(--dsw-alias-state-success-primary, #2f9e6e)' : 'var(--dsw-alias-state-error-primary, #d0563b)',
+            },
           });
         }));
     }
@@ -928,29 +1090,47 @@ window.__ModuleLoader__.load({
       const doneText = !busy && Number(probeAll?.total) > 0
         ? format(t, 'health.probeAllDone', { done: probeAll.total, total: probeAll.total, ok: probeAll.ok ?? 0 })
         : null;
-      return h('div', { style: styles.health },
+      return h('section', { className: 'mcpmm-card', style: styles.health, 'aria-label': t('health.statusLabel') },
+        h('div', { style: styles.healthTop },
+          h('div', { style: styles.statRow },
+            STATUS_KEYS.map((key) => {
+              const active = statusFilter === key;
+              const color = STATUS_COLORS[key] ?? STATUS_COLORS.disabled;
+              return h('button', {
+                key,
+                type: 'button',
+                className: 'mcpmm-stat',
+                'aria-pressed': active,
+                title: t(`status.${key}`),
+                style: active ? { ...styles.statTile, ...styles.statTileActive } : styles.statTile,
+                onClick: () => onStatusFilter(active ? '' : key),
+              },
+              h('span', {
+                style: {
+                  ...styles.statCount,
+                  color: active ? 'var(--dsw-alias-brand-primary, #4d6bfe)' : 'inherit',
+                },
+              }, statusCounts?.[key] ?? 0),
+              h('span', { style: styles.statLabel },
+                h('span', { style: { ...styles.dot, background: color } }),
+                t(`status.${key}`)));
+            })),
+          h('div', { style: styles.healthRow },
+            h('button', {
+              type: 'button',
+              className: 'mcpmm-btn mcpmm-btn--primary', style: styles.primaryButton,
+              onClick: onProbeAll,
+              disabled: busy,
+              'aria-busy': busy,
+            }, busy ? format(t, 'health.probingCount', { done: probeAll?.done ?? 0, total: probeAll?.total ?? 0 }) : t('health.probeAll')),
+            rateText ? h('span', { style: styles.rateText }, rateText) : null,
+            doneText ? h('span', { role: 'status', style: styles.hint }, doneText) : null)),
         h('div', { style: styles.healthRow },
-          h('span', { style: styles.label }, t('health.statusLabel')),
-          STATUS_KEYS.map((key) => h('button', {
-            key,
-            type: 'button',
-            'aria-pressed': statusFilter === key,
-            style: statusFilter === key ? { ...styles.primaryButton, borderColor: 'var(--dsw-alias-label-primary)' } : styles.button,
-            onClick: () => onStatusFilter(statusFilter === key ? '' : key),
-          }, `${t(`status.${key}`)} ${statusCounts?.[key] ?? 0}`))),
-        h('div', { style: styles.healthRow },
-          h('span', { style: styles.hint }, rateText),
-          h('button', {
-            type: 'button',
-            style: styles.primaryButton,
-            onClick: onProbeAll,
-            disabled: busy,
-            'aria-busy': busy,
-          }, busy ? format(t, 'health.probingCount', { done: probeAll?.done ?? 0, total: probeAll?.total ?? 0 }) : t('health.probeAll')),
-          doneText ? h('span', { role: 'status', style: styles.hint }, doneText) : null,
-          h('span', { style: styles.label }, t('health.autoProbe')),
-          h(Switch, { t, enabled: autoProbe === true, busy: autoProbeBusy, onToggle: onToggleAutoProbe, ariaLabel: t('health.autoProbe') }),
-          h('span', { style: styles.hint }, t('health.autoProbeHint'))));
+          h('span', { style: styles.hint }, t('health.autoProbeHint')),
+          h('span', { style: styles.healthSpacer }),
+          h('span', { style: styles.autoProbe },
+            h('span', { style: styles.label }, t('health.autoProbe')),
+            h(Switch, { t, enabled: autoProbe === true, busy: autoProbeBusy, onToggle: onToggleAutoProbe, ariaLabel: t('health.autoProbe') }))));
     }
 
     // ── 工具中心 ────────────────────────────────────────────────────────────
@@ -986,11 +1166,11 @@ window.__ModuleLoader__.load({
       const returned = Number.isFinite(Number(catalog?.returned)) ? Number(catalog.returned) : tools.length;
       const truncated = catalog?.truncated === true;
 
-      return h('div', { style: styles.panel },
+      return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
         h('div', { style: styles.healthRow },
           h('button', {
             type: 'button',
-            style: styles.link,
+            className: 'mcpmm-link', style: styles.link,
             'aria-expanded': open === true,
             onClick: () => setOpen((value) => !value),
           }, `${open ? '▾' : '▸'} ${t('tools.center')}`),
@@ -1009,8 +1189,8 @@ window.__ModuleLoader__.load({
                   if (event?.key === 'Enter') load(query);
                 },
               }),
-              h('button', { type: 'button', style: styles.button, onClick: () => load(query), disabled: busy }, busy ? t('loading') : t('tools.search')),
-              h('button', { type: 'button', style: styles.button, onClick: () => load(query), disabled: busy }, t('tools.refresh'))),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => load(query), disabled: busy }, busy ? t('loading') : t('tools.search')),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => load(query), disabled: busy }, t('tools.refresh'))),
             error ? h('p', { style: styles.error }, error) : null,
             busy && catalog === undefined ? h('p', { style: styles.hint }, t('tools.loading')) : null,
             tools.length === 0 && !busy && catalog !== undefined
@@ -1023,11 +1203,11 @@ window.__ModuleLoader__.load({
                   tools.map((tool) => h('button', {
                     key: `${tool.serverName}/${tool.toolName}`,
                     type: 'button',
-                    style: styles.toolRow,
+                    className: 'mcpmm-tool-row', style: styles.toolRow,
                     title: String(tool.publicName ?? ''),
                     onClick: () => onOpenTool({ serverName: tool.serverName, toolName: tool.toolName }),
                   },
-                  h('span', { style: styles.toolRowName }, String(tool.publicName ?? `${tool.serverName}/${tool.toolName}`)),
+                  h('span', { className: 'mcpmm-tool-name', style: styles.toolRowName }, String(tool.publicName ?? `${tool.serverName}/${tool.toolName}`)),
                   h('span', { style: styles.hint }, String(tool.description ?? ''))))))
               : null)
           : null);
@@ -1150,18 +1330,18 @@ window.__ModuleLoader__.load({
         if (event?.key === 'Escape') onClose();
       };
 
-      return h('div', { style: styles.overlay, role: 'presentation' },
+      return h('div', { className: 'mcpmm-overlay', style: styles.overlay, role: 'presentation' },
         h('div', {
           role: 'dialog',
           'aria-modal': 'true',
           'aria-label': format(t, 'drawer.title', { tool: toolName }),
           tabIndex: -1,
-          style: styles.drawer,
+          className: 'mcpmm-drawer', style: styles.drawer,
           onKeyDown,
         },
-        h('div', { style: styles.drawerHeader },
+        h('div', { className: 'mcpmm-drawer-header', style: styles.drawerHeader },
           h('h4', { style: styles.panelTitle }, format(t, 'drawer.title', { tool: toolName })),
-          h('button', { type: 'button', style: styles.button, onClick: onClose }, t('drawer.close'))),
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onClose }, t('drawer.close'))),
         h('p', { style: styles.hint },
           `${t('drawer.server')}: ${detail?.serverName ?? selection?.serverName ?? ''} · ${t('drawer.tool')}: ${detail?.publicName ?? toolName}`),
         loading ? h('p', { style: styles.hint }, t('drawer.loading')) : null,
@@ -1174,7 +1354,7 @@ window.__ModuleLoader__.load({
             h('div', null,
               h('button', {
                 type: 'button',
-                style: styles.link,
+                className: 'mcpmm-link', style: styles.link,
                 'aria-expanded': schemaOpen === true,
                 onClick: () => setSchemaOpen((value) => !value),
               }, schemaOpen ? t('drawer.hideSchema') : t('drawer.showSchema')),
@@ -1190,8 +1370,8 @@ window.__ModuleLoader__.load({
                 onChange: (event) => setArgumentsText(event.target.value),
               })),
             h('div', { style: styles.healthRow },
-              h('button', { type: 'button', style: styles.button, onClick: fillSample }, t('drawer.sample')),
-              h('button', { type: 'button', style: styles.button, onClick: () => invoke(true), disabled: busy }, busy ? t('drawer.running') : t('drawer.dryRun')),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: fillSample }, t('drawer.sample')),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => invoke(true), disabled: busy }, busy ? t('drawer.running') : t('drawer.dryRun')),
               h('button', {
                 type: 'button',
                 style: confirming ? { ...styles.primaryButton, borderColor: 'var(--dsw-alias-state-error-primary, #d0563b)' } : styles.primaryButton,
@@ -1199,7 +1379,7 @@ window.__ModuleLoader__.load({
                 disabled: busy,
               }, busy ? t('drawer.running') : confirming ? t('drawer.confirmExecute') : t('drawer.execute')),
               confirming
-                ? h('button', { type: 'button', style: styles.button, onClick: () => setConfirming(false), disabled: busy }, t('drawer.cancelConfirm'))
+                ? h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => setConfirming(false), disabled: busy }, t('drawer.cancelConfirm'))
                 : null),
             confirming ? h('p', { style: styles.warning }, t('drawer.confirmHint')) : null,
             error ? h('p', { style: styles.error }, error) : null,
@@ -1210,7 +1390,7 @@ window.__ModuleLoader__.load({
                     resultOk
                       ? format(t, 'drawer.resultOk', { duration: result?.durationMs ?? 0 })
                       : format(t, 'drawer.resultError', { message: result?.error?.message ?? result?.message ?? '' })),
-                  h('button', { type: 'button', style: styles.button, onClick: copyResult }, copied ? t('drawer.copied') : t('drawer.copy'))),
+                  h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: copyResult }, copied ? t('drawer.copied') : t('drawer.copy'))),
                 result?.code ? h('p', { style: styles.hint }, format(t, 'drawer.code', { code: result.code })) : null,
                 result?.dryRun === true ? h('p', { style: styles.ok }, t('drawer.dryRunDone')) : null,
                 truncated ? h('p', { style: styles.warning }, t('drawer.truncated')) : null,
@@ -1225,7 +1405,7 @@ window.__ModuleLoader__.load({
       return h('div', { style: styles.advanced },
         h('button', {
           type: 'button',
-          style: styles.link,
+          className: 'mcpmm-link', style: styles.link,
           'aria-expanded': open === true,
           onClick: onToggle,
         }, `${open ? '▾' : '▸'} ${t('advanced.title')}`),
@@ -1242,17 +1422,17 @@ window.__ModuleLoader__.load({
             h('div', { style: styles.fieldRow },
               h(Field, { label: t('advanced.initialDelayMs') },
                 h('input', {
-                  style: styles.input, type: 'number', min: 100, max: 60000,
+                  className: 'mcpmm-input', style: styles.input, type: 'number', min: 100, max: 60000,
                   value: form.initialDelayMs, 'aria-label': t('advanced.initialDelayMs'), onChange: update('initialDelayMs'),
                 })),
               h(Field, { label: t('advanced.maxDelayMs') },
                 h('input', {
-                  style: styles.input, type: 'number', min: 100, max: 300000,
+                  className: 'mcpmm-input', style: styles.input, type: 'number', min: 100, max: 300000,
                   value: form.maxDelayMs, 'aria-label': t('advanced.maxDelayMs'), onChange: update('maxDelayMs'),
                 })),
               h(Field, { label: t('advanced.maxAttempts') },
                 h('input', {
-                  style: styles.input, type: 'number', min: 1, max: 100,
+                  className: 'mcpmm-input', style: styles.input, type: 'number', min: 1, max: 100,
                   value: form.maxAttempts, 'aria-label': t('advanced.maxAttempts'), onChange: update('maxAttempts'),
                 }))),
             h('label', { style: styles.candidate },
@@ -1265,7 +1445,7 @@ window.__ModuleLoader__.load({
               t('advanced.failOnStartupError')),
             h(Field, { label: t('advanced.maxInstructionBytes') },
               h('input', {
-                style: styles.input, type: 'number', min: 1024, max: 1048576,
+                className: 'mcpmm-input', style: styles.input, type: 'number', min: 1024, max: 1048576,
                 value: form.maxInstructionBytes, 'aria-label': t('advanced.maxInstructionBytes'), onChange: update('maxInstructionBytes'),
               })),
             h('p', { style: styles.hint }, t('advanced.hint')))
@@ -1440,17 +1620,17 @@ window.__ModuleLoader__.load({
         : t('form.noExistingSecrets');
       const urlMasked = mode === 'edit' && config?.urlMasked === true;
 
-      return h('div', { style: styles.panel },
+      return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
         h('h4', { style: styles.panelTitle }, mode === 'add'
           ? t('form.addTitle')
           : format(t, 'form.editTitle', { name: server?.serverName ?? '' })),
         h('div', { style: styles.fieldRow },
           mode === 'add'
             ? h(Field, { label: t('form.serverName'), hint: t('form.serverNameHint') },
-              h('input', { style: styles.input, value: form.serverName, 'aria-label': t('form.serverName'), onChange: update('serverName'), placeholder: 'my-server' }))
+              h('input', { className: 'mcpmm-input', style: styles.input, value: form.serverName, 'aria-label': t('form.serverName'), onChange: update('serverName'), placeholder: 'my-server' }))
             : null,
           h(Field, { label: t('form.transport') },
-            h('select', { style: styles.input, value: form.transport, onChange: update('transport'), disabled: mode === 'edit', 'aria-label': t('form.transport') },
+            h('select', { className: 'mcpmm-input', style: styles.input, value: form.transport, onChange: update('transport'), disabled: mode === 'edit', 'aria-label': t('form.transport') },
               h('option', { value: 'streamable-http' }, 'streamable-http'),
               h('option', { value: 'stdio' }, 'stdio')))),
         mode === 'edit'
@@ -1459,7 +1639,7 @@ window.__ModuleLoader__.load({
             hint: format(t, 'form.appHint', { name: String(detectedApp ?? server?.serverName ?? '') }),
           },
           h('input', {
-            style: styles.input,
+            className: 'mcpmm-input', style: styles.input,
             value: appName,
             'aria-label': t('form.app'),
             placeholder: t('form.appPlaceholder'),
@@ -1469,7 +1649,7 @@ window.__ModuleLoader__.load({
         isHttp
           ? h(Field, { label: t('form.url'), hint: urlMasked ? t('form.urlMaskedHint') : undefined },
             h('input', {
-              style: styles.input,
+              className: 'mcpmm-input', style: styles.input,
               value: form.url,
               'aria-label': t('form.url'),
               onChange: update('url'),
@@ -1477,12 +1657,12 @@ window.__ModuleLoader__.load({
             }))
           : h('div', null,
             h(Field, { label: t('form.command') },
-              h('input', { style: styles.input, value: form.command, 'aria-label': t('form.command'), onChange: update('command'), placeholder: 'npx' })),
+              h('input', { className: 'mcpmm-input', style: styles.input, value: form.command, 'aria-label': t('form.command'), onChange: update('command'), placeholder: 'npx' })),
             h(Field, { label: t('form.cwd') },
-              h('input', { style: styles.input, value: form.cwd, 'aria-label': t('form.cwd'), onChange: update('cwd'), placeholder: '/path/to/workdir' }))),
+              h('input', { className: 'mcpmm-input', style: styles.input, value: form.cwd, 'aria-label': t('form.cwd'), onChange: update('cwd'), placeholder: '/path/to/workdir' }))),
         h('div', { style: styles.fieldRow },
           h(Field, { label: t('form.timeout') },
-            h('input', { style: styles.input, type: 'number', min: 1000, value: form.timeout, 'aria-label': t('form.timeout'), onChange: update('timeout') }))),
+            h('input', { className: 'mcpmm-input', style: styles.input, type: 'number', min: 1000, value: form.timeout, 'aria-label': t('form.timeout'), onChange: update('timeout') }))),
         isHttp
           ? h(Field, { label: t('form.headers'), hint: `${t('form.headersHint')} ${secretHint}` },
             h('textarea', { style: { ...styles.textarea, minHeight: '56px' }, value: form.headers, 'aria-label': t('form.headers'), onChange: update('headers'), placeholder: '{"Authorization": "Bearer ..."}' }))
@@ -1509,8 +1689,8 @@ window.__ModuleLoader__.load({
         h(AdvancedFields, { t, form, update, open: advancedOpen, onToggle: () => setAdvancedOpen((value) => !value) }),
         error ? h('p', { style: styles.error }, error) : null,
         h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-          h('button', { type: 'button', style: styles.button, onClick: onClose, disabled: busy }, t('cancel')),
-          h('button', { type: 'button', style: styles.primaryButton, onClick: submit, disabled: busy }, busy ? t('saving') : t('save'))));
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onClose, disabled: busy }, t('cancel')),
+          h('button', { type: 'button', className: 'mcpmm-btn mcpmm-btn--primary', style: styles.primaryButton, onClick: submit, disabled: busy }, busy ? t('saving') : t('save'))));
     }
 
     // ── 导入面板 ────────────────────────────────────────────────────────────
@@ -1622,7 +1802,7 @@ window.__ModuleLoader__.load({
       const sources = scan?.sources ?? [];
       const selectedCount = Object.values(selected).filter(Boolean).length;
 
-      return h('div', { style: styles.panel },
+      return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
         h('h4', { style: styles.panelTitle }, t('importer.title')),
         h(Field, { label: t('importer.pasteLabel'), hint: t('importer.pasteHint') },
           h('textarea', {
@@ -1634,21 +1814,21 @@ window.__ModuleLoader__.load({
           })),
         h(Field, { label: t('importer.fileLabel'), hint: t('importer.fileHint') },
           h('input', {
-            style: styles.input,
+            className: 'mcpmm-input', style: styles.input,
             value: filePath,
             'aria-label': t('importer.fileLabel'),
             placeholder: t('importer.filePlaceholder'),
             onChange: (event) => setFilePath(event.target.value),
           })),
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-          h('button', { type: 'button', style: styles.button, onClick: runScan, disabled: scanning || busy }, scanning ? t('importer.scanning') : t('importer.scan')),
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: runScan, disabled: scanning || busy }, scanning ? t('importer.scanning') : t('importer.scan')),
           scan ? h('span', { style: styles.hint }, format(t, 'importer.sources', { count: sources.length })) : h('span', { style: styles.hint }, t('importer.noScan'))),
         sources.length > 0
           ? h('div', { style: styles.candidateList },
             sources.map((source) => h('div', { key: String(source.file), style: styles.candidate },
               h('button', {
                 type: 'button',
-                style: styles.link,
+                className: 'mcpmm-link', style: styles.link,
                 title: String(source.file ?? ''),
                 onClick: () => setFilePath(String(source.file ?? '')),
               }, h('span', null, `[${source.clientName ?? source.client ?? ''}] ${source.file ?? ''}`)),
@@ -1680,7 +1860,7 @@ window.__ModuleLoader__.load({
         error ? h('p', { style: styles.error }, error) : null,
         h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' } },
           h('span', { style: styles.label }, t('importer.onConflict')),
-          h('select', { style: styles.input, value: conflictAction, onChange: (event) => setConflictAction(event.target.value), 'aria-label': t('importer.onConflict') },
+          h('select', { className: 'mcpmm-input', style: styles.input, value: conflictAction, onChange: (event) => setConflictAction(event.target.value), 'aria-label': t('importer.onConflict') },
             h('option', { value: 'skip' }, t('importer.conflictSkip')),
             h('option', { value: 'overwrite' }, t('importer.conflictOverwrite')),
             h('option', { value: 'rename' }, t('importer.conflictRename'))),
@@ -1688,9 +1868,9 @@ window.__ModuleLoader__.load({
             h('input', { type: 'checkbox', checked: importEnabled, onChange: (event) => setImportEnabled(event.target.checked) }),
             t('importer.importEnabled'))),
         h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-          h('button', { type: 'button', style: styles.button, onClick: onClose, disabled: busy }, t('cancel')),
-          h('button', { type: 'button', style: styles.button, onClick: doPreview, disabled: busy }, t('importer.preview')),
-          h('button', { type: 'button', style: styles.primaryButton, onClick: doImport, disabled: busy }, busy ? t('importer.importing') : t('importer.confirm'))));
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onClose, disabled: busy }, t('cancel')),
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: doPreview, disabled: busy }, t('importer.preview')),
+          h('button', { type: 'button', className: 'mcpmm-btn mcpmm-btn--primary', style: styles.primaryButton, onClick: doImport, disabled: busy }, busy ? t('importer.importing') : t('importer.confirm'))));
     }
 
     function groupByFile(scan, selected) {
@@ -1762,13 +1942,13 @@ window.__ModuleLoader__.load({
         { format: 'diagnostics', label: t('exporter.diagnostics') },
       ];
 
-      return h('div', { style: styles.panel },
+      return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
         h('h4', { style: styles.panelTitle }, t('exporter.title')),
         h('div', { style: styles.healthRow },
           formats.map((item) => h('button', {
             key: item.format,
             type: 'button',
-            style: styles.button,
+            className: 'mcpmm-btn', style: styles.button,
             onClick: () => run(item.format),
             disabled: busy,
           }, item.label))),
@@ -1796,8 +1976,8 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
               h('span', { style: styles.label }, `${result.format} · ${result.recordCount ?? 0}`),
               h('div', { style: { display: 'flex', gap: '8px' } },
-                h('button', { type: 'button', style: styles.button, onClick: download }, t('exporter.download')),
-                h('button', { type: 'button', style: styles.button, onClick: copy }, copied ? t('exporter.copied') : t('exporter.copy')))),
+                h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: download }, t('exporter.download')),
+                h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: copy }, copied ? t('exporter.copied') : t('exporter.copy')))),
             h('pre', { style: styles.code }, String(result.content ?? '')),
             result.warnings?.length
               ? h('div', null,
@@ -1807,7 +1987,7 @@ window.__ModuleLoader__.load({
           : null,
         error ? h('p', { style: styles.error }, error) : null,
         h('div', { style: { display: 'flex', justifyContent: 'flex-end' } },
-          h('button', { type: 'button', style: styles.button, onClick: onClose, disabled: busy }, t('close'))));
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onClose, disabled: busy }, t('close'))));
     }
 
     // ── 应用组卡（v0.4）─────────────────────────────────────────────────────
@@ -1835,8 +2015,8 @@ window.__ModuleLoader__.load({
         onRename(draft);
       };
 
-      return h('div', { style: styles.groupCard, role: 'group', 'aria-label': name },
-        h('div', { style: styles.groupHeader },
+      return h('div', { className: 'mcpmm-card mcpmm-group-card', style: styles.groupCard, role: 'group', 'aria-label': name },
+        h('div', { className: 'mcpmm-group-header', style: styles.groupHeader },
           h('button', {
             type: 'button',
             style: styles.groupToggle,
@@ -1844,19 +2024,24 @@ window.__ModuleLoader__.load({
             onClick: onToggle,
           },
           h('span', { style: styles.groupIcon, 'aria-hidden': 'true' }, String(app?.icon ?? '🧩')),
-          h('span', { style: styles.groupName }, name),
-          h('span', { style: styles.groupMeta }, format(t, 'apps.services', { count: total })),
-          h('span', { style: styles.groupMeta }, format(t, 'apps.healthSummary', { connected, failed, disabled })),
-          h('span', { style: styles.groupMeta }, format(t, 'toolCount', { count: toolCount })),
-          source === 'manual' ? h(Tag, null, t('apps.manual')) : null),
+          h('span', { style: styles.groupText },
+            h('span', { style: styles.groupNameRow },
+              h('span', { style: styles.groupName }, name),
+              source === 'manual' ? h(Tag, null, t('apps.manual')) : null),
+            h('span', { style: styles.groupMetaRow },
+              h('span', { style: styles.groupMeta }, format(t, 'apps.services', { count: total })),
+              h('span', { style: styles.groupMeta }, format(t, 'apps.healthSummary', { connected, failed, disabled })),
+              h('span', { style: styles.groupMeta }, format(t, 'toolCount', { count: toolCount })))),
+          h('span', { style: styles.chevron, 'aria-hidden': 'true' }, collapsed === true ? '▸' : '▾')),
           h('div', { style: styles.actions },
-            h('button', { type: 'button', style: styles.link, onClick: startRename, disabled: busy }, t('apps.rename')),
+            h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: startRename, disabled: busy }, t('apps.rename')),
             source === 'manual'
-              ? h('button', { type: 'button', style: styles.link, onClick: onRestore, disabled: busy }, t('apps.restore'))
+              ? h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: onRestore, disabled: busy }, t('apps.restore'))
               : null)),
         renaming
           ? h('div', { style: styles.renameRow },
             h('input', {
+              className: 'mcpmm-input',
               style: { ...styles.input, flex: '1 1 200px' },
               value: draft,
               'aria-label': t('apps.renamePlaceholder'),
@@ -1867,8 +2052,8 @@ window.__ModuleLoader__.load({
                 if (event?.key === 'Escape') cancelRename();
               },
             }),
-            h('button', { type: 'button', style: styles.primaryButton, onClick: commitRename, disabled: busy }, t('apps.save')),
-            h('button', { type: 'button', style: styles.button, onClick: cancelRename, disabled: busy }, t('apps.cancel')))
+            h('button', { type: 'button', className: 'mcpmm-btn mcpmm-btn--primary', style: styles.primaryButton, onClick: commitRename, disabled: busy }, t('apps.save')),
+            h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: cancelRename, disabled: busy }, t('apps.cancel')))
           : null,
         collapsed === true
           ? null
@@ -1912,27 +2097,34 @@ window.__ModuleLoader__.load({
         setNoteEditing(false);
       };
 
-      return h('div', { style: styles.row, role: 'row' },
-        h('div', { style: styles.rowMain },
-          h('div', { style: { minWidth: 0 }, role: 'cell' },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 } },
+      return h('div', { className: 'mcpmm-row', style: styles.row, role: 'row' },
+        h('div', { className: 'mcpmm-row-main', style: styles.rowMain },
+          h('div', { style: styles.rowIdentity, role: 'cell' },
+            h('div', { style: styles.rowNameLine },
               h(PinStar, { t, pinned, busy: prefsBusy, onToggle: () => onPin(!pinned) }),
-              h('div', { style: styles.serverName, title: server.id }, server.serverName),
+              h('span', { style: styles.serverName, title: server.id }, server.serverName),
               h(Tag, { title: t('origin.' + server.origin) }, t('origin.' + server.origin)),
               server.duplicate ? h(Tag, { title: t('duplicateHint') }, t('duplicate')) : null,
               appLabel ? h(Tag, { title: format(t, 'apps.badgeTitle', { name: appLabel }) }, appLabel) : null),
-            server.shortId && server.shortId !== server.serverName
-              ? h('div', { style: styles.endpoint, title: server.id }, server.shortId)
-              : null,
-            server.endpoint ? h('div', { style: styles.endpoint, title: server.endpoint }, server.endpoint) : null,
+            h('div', { style: styles.rowMetaLine },
+              server.shortId && server.shortId !== server.serverName
+                ? h('span', { style: styles.endpoint, title: server.id }, server.shortId)
+                : null,
+              server.endpoint ? h('span', { style: styles.endpoint, title: server.endpoint }, server.endpoint) : null,
+              h('span', { style: styles.rowMetaChip, title: server.transport }, server.transport),
+              h('span', { style: styles.rowMetaText }, format(t, 'toolCount', { count: server.toolCount ?? 0 })),
+              toolNames.length > 0
+                ? h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
+                  expanded ? t('hideTools') : t('showTools'))
+                : null),
             tags.length > 0 || tagEditing
               ? h('div', { style: styles.tagRow },
                 tags.map((tag) => h(Tag, { key: tag }, `#${tag}`)),
-                !tagEditing ? h('button', { type: 'button', style: styles.link, onClick: startTags }, t('tags.edit')) : null,
+                !tagEditing ? h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: startTags }, t('tags.edit')) : null,
                 tagEditing
                   ? h('span', { style: styles.inlineRow },
                     h('input', {
-                      style: { ...styles.input, fontSize: '11px', padding: '2px 6px' },
+                      style: { ...styles.input, fontSize: '11px', height: '24px', padding: '0 6px' },
                       value: tagDraft,
                       placeholder: t('tags.placeholder'),
                       'aria-label': t('tags.placeholder'),
@@ -1942,10 +2134,10 @@ window.__ModuleLoader__.load({
                         if (event?.key === 'Escape') setTagEditing(false);
                       },
                     }),
-                    h('button', { type: 'button', style: styles.link, onClick: commitTags }, t('tags.save')),
-                    h('button', { type: 'button', style: styles.link, onClick: () => setTagEditing(false) }, t('cancel')))
+                    h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: commitTags }, t('tags.save')),
+                    h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: () => setTagEditing(false) }, t('cancel')))
                   : null)
-              : h('button', { type: 'button', style: styles.link, onClick: startTags }, t('tags.add')),
+              : h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: startTags }, t('tags.add')),
             noteEditing
               ? h('div', { style: styles.inlineRow },
                 h('textarea', {
@@ -1955,13 +2147,13 @@ window.__ModuleLoader__.load({
                   'aria-label': t('note.placeholder'),
                   onChange: (event) => setNoteDraft(event.target.value),
                 }),
-                h('button', { type: 'button', style: styles.link, onClick: commitNote }, t('note.save')),
-                h('button', { type: 'button', style: styles.link, onClick: () => setNoteEditing(false) }, t('cancel')))
+                h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: commitNote }, t('note.save')),
+                h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: () => setNoteEditing(false) }, t('cancel')))
               : note !== ''
                 ? h('div', { style: styles.inlineRow },
                   h('p', { style: styles.noteBox, title: note }, note),
-                  h('button', { type: 'button', style: styles.link, onClick: startNote }, t('note.edit')))
-                : h('button', { type: 'button', style: styles.link, onClick: startNote }, t('note.add')),
+                  h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: startNote }, t('note.edit')))
+                : h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: startNote }, t('note.add')),
             h(ProbeHistoryDots, { t, history: historyOf(server, prefs) }),
             server.error ? h('div', { style: styles.error, title: server.error }, server.error) : null,
             probeResult
@@ -1976,35 +2168,29 @@ window.__ModuleLoader__.load({
                     ? h('div', null,
                       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
                         h('span', { style: styles.hint }, t('probeStderr')),
-                        h('button', { type: 'button', style: styles.link, onClick: () => copyDiagnostics(probeResult) }, t('copyDiagnostics'))),
+                        h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, onClick: () => copyDiagnostics(probeResult) }, t('copyDiagnostics'))),
                       h('pre', { style: { ...styles.code, maxHeight: '140px' } }, probeResult.stderr))
                     : null))
               : null),
-          h(Badge, { t, status: server.status }),
-          h('span', { style: { fontSize: '12px' } }, server.transport),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' } },
-            h('span', null, format(t, 'toolCount', { count: server.toolCount ?? 0 })),
-            toolNames.length > 0
-              ? h('button', { type: 'button', style: styles.link, 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
-                expanded ? t('hideTools') : t('showTools'))
-              : null),
-          h('div', { style: styles.actions },
-            h('button', { type: 'button', style: styles.button, onClick: onProbe, disabled: busy }, busy ? t('probing') : t('probe')),
-            h('button', { type: 'button', style: styles.button, onClick: onEdit }, t('edit')),
-            h('button', {
-              type: 'button',
-              style: styles.button,
-              onClick: () => (confirming ? onRemove() : setConfirming(true)),
-              onBlur: () => setConfirming(false),
-            }, confirming ? t('confirmRemove') : t('remove')),
-            h(Switch, { t, enabled: server.enabled, busy, onToggle: onToggle }))),
+          h('div', { style: styles.rowStatus, role: 'cell' }, h(Badge, { t, status: server.status })),
+          h('div', { style: styles.rowActionsCell, role: 'cell' },
+            h('div', { style: styles.actions },
+              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onProbe, disabled: busy }, busy ? t('probing') : t('probe')),
+              h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onEdit }, t('edit')),
+              h('button', {
+                type: 'button',
+                className: 'mcpmm-btn', style: styles.button,
+                onClick: () => (confirming ? onRemove() : setConfirming(true)),
+                onBlur: () => setConfirming(false),
+              }, confirming ? t('confirmRemove') : t('remove')),
+              h(Switch, { t, enabled: server.enabled, busy, onToggle: onToggle })))),
         expanded
           ? h('div', { style: styles.toolList },
             toolNames.length > 0
               ? toolNames.map((toolName) => h('button', {
                 key: toolName,
                 type: 'button',
-                style: styles.toolChip,
+                className: 'mcpmm-tool-chip', style: styles.toolChip,
                 title: toolName,
                 onClick: () => onOpenTool({ serverId: server.id, serverName: server.serverName, toolName }),
               }, toolName))
@@ -2284,26 +2470,50 @@ window.__ModuleLoader__.load({
       const rateText = probeRateText(t, prefsServers);
 
       const header = h('div', { style: styles.header },
-        h('div', null,
-          h('h3', { style: styles.title }, t('title')),
-          h('p', { style: styles.subtitle }, t('subtitle'))),
-        h('button', { type: 'button', style: styles.button, onClick: load }, t('refresh')));
+        h('div', { style: styles.headerMain },
+          h('span', { style: styles.brandMark, 'aria-hidden': 'true' },
+            h('svg', {
+              width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none',
+              stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+            },
+            h('path', { d: 'M9 7V3M15 7V3' }),
+            h('path', { d: 'M6 7h12v4a6 6 0 0 1-12 0V7Z' }),
+            h('path', { d: 'M12 17v4' }))),
+          h('div', { style: styles.headerText },
+            h('h3', { style: styles.title }, t('title')),
+            h('p', { style: styles.subtitle }, t('subtitle')))),
+        h('div', { style: styles.headerActions },
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: load }, t('refresh'))));
 
       if (state.phase === 'loading') {
-        return h('div', { style: styles.root }, header, h('p', { style: styles.hint }, t('loading')));
+        return h('div', { style: styles.root, className: 'mcpmm-root' }, h(StyleTag, null), header,
+          h('div', { style: styles.emptyState },
+            h('span', { style: styles.emptyIcon, 'aria-hidden': 'true' }, '◌'),
+            h('p', { style: styles.emptyText }, t('loading'))));
       }
       if (state.phase === 'error') {
-        return h('div', { style: styles.root }, header,
-          h('p', { style: styles.error }, `${t('errorApi')}（${state.message}）`));
+        return h('div', { style: styles.root, className: 'mcpmm-root' }, h(StyleTag, null), header,
+          h('div', { style: styles.emptyState },
+            h('span', { style: styles.emptyIcon, 'aria-hidden': 'true' }, '⚠'),
+            h('p', { style: styles.error }, `${t('errorApi')}（${state.message}）`),
+            h('button', {
+              type: 'button',
+              className: 'mcpmm-btn mcpmm-btn--primary',
+              style: styles.primaryButton,
+              onClick: () => {
+                if (typeof location !== 'undefined' && typeof location.reload === 'function') location.reload();
+              },
+            }, t('reloadPage'))));
       }
 
       const noticeStyle = notice?.kind === 'error'
-        ? { ...styles.notice, color: 'var(--dsw-alias-state-error-primary, #d0563b)', border: '1px solid var(--dsw-alias-state-error-primary, #d0563b)' }
+        ? { ...styles.notice, color: 'var(--dsw-alias-state-error-primary, #d0563b)', background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary, #d0563b) 12%, transparent)' }
         : notice?.kind === 'warn'
-          ? { ...styles.notice, color: 'var(--dsw-alias-status-warning, #d08b24)', border: '1px solid var(--dsw-alias-status-warning, #d08b24)' }
-          : { ...styles.notice, color: 'var(--dsw-alias-status-success, #2f9e6e)', border: '1px solid var(--dsw-alias-border-l2)' };
+          ? { ...styles.notice, color: 'var(--dsw-alias-state-warn-primary, #d08b24)', background: 'color-mix(in srgb, var(--dsw-alias-state-warn-primary, #d08b24) 12%, transparent)' }
+          : { ...styles.notice, color: 'var(--dsw-alias-state-success-primary, #2f9e6e)', background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary, #2f9e6e) 12%, transparent)' };
 
-      return h('div', { style: styles.root },
+      return h('div', { style: styles.root, className: 'mcpmm-root' },
+        h(StyleTag, null),
         header,
         notice ? h('p', { role: 'status', 'aria-live': 'polite', style: noticeStyle }, notice.text) : null,
         summary
@@ -2337,47 +2547,49 @@ window.__ModuleLoader__.load({
           onToggleAutoProbe: () => setAutoProbe(!autoProbeOn),
         }),
         h('div', { style: styles.viewBar },
-          h('span', { style: styles.label }, t('view.label')),
-          h('button', {
-            type: 'button',
-            'aria-pressed': viewMode === 'apps',
-            style: viewMode === 'apps' ? styles.primaryButton : styles.button,
-            onClick: () => changeView('apps'),
-          }, t('view.apps')),
-          h('button', {
-            type: 'button',
-            'aria-pressed': viewMode === 'flat',
-            style: viewMode === 'flat' ? styles.primaryButton : styles.button,
-            onClick: () => changeView('flat'),
-          }, t('view.flat')),
-          multiApps.length > 0 ? h('span', { style: styles.label }, t('apps.filterLabel')) : null,
-          multiApps.length > 0
-            ? h('button', {
+          h('div', { style: styles.segmented, role: 'group', 'aria-label': t('view.label') },
+            h('button', {
               type: 'button',
-              'aria-pressed': activeAppFilter === '',
-              style: activeAppFilter === '' ? styles.primaryButton : styles.button,
-              onClick: () => setAppFilter(''),
-            }, t('apps.filterAll'))
-            : null,
-          multiApps.map((app) => h('button', {
-            key: app.id,
-            type: 'button',
-            'aria-pressed': activeAppFilter === app.id,
-            style: activeAppFilter === app.id ? styles.primaryButton : styles.button,
-            title: String(app.name ?? ''),
-            onClick: () => setAppFilter((previous) => (previous === app.id ? '' : app.id)),
-          }, `${app.icon ? `${app.icon} ` : ''}${String(app.name ?? '')} ${Number.isFinite(Number(app.total)) ? Number(app.total) : 0}`))),
+              'aria-pressed': viewMode === 'apps',
+              className: 'mcpmm-btn', style: styles.button,
+              onClick: () => changeView('apps'),
+            }, t('view.apps')),
+            h('button', {
+              type: 'button',
+              'aria-pressed': viewMode === 'flat',
+              className: 'mcpmm-btn', style: styles.button,
+              onClick: () => changeView('flat'),
+            }, t('view.flat'))),
+          multiApps.length > 0
+            ? h('div', { style: styles.filterChips },
+              h('span', { style: styles.label }, t('apps.filterLabel')),
+              h('button', {
+                type: 'button',
+                'aria-pressed': activeAppFilter === '',
+                style: activeAppFilter === '' ? styles.chipActive : styles.chip,
+                onClick: () => setAppFilter(''),
+              }, t('apps.filterAll')),
+              multiApps.map((app) => h('button', {
+                key: app.id,
+                type: 'button',
+                'aria-pressed': activeAppFilter === app.id,
+                style: activeAppFilter === app.id ? styles.chipActive : styles.chip,
+                title: String(app.name ?? ''),
+                onClick: () => setAppFilter((previous) => (previous === app.id ? '' : app.id)),
+              }, `${app.icon ? `${app.icon} ` : ''}${String(app.name ?? '')} ${Number.isFinite(Number(app.total)) ? Number(app.total) : 0}`)))
+            : null),
         h('div', { style: styles.toolbar },
           h('input', {
-            style: { ...styles.input, flex: '1 1 180px' },
+            style: { ...styles.input, flex: '1 1 220px' },
             value: query,
             placeholder: t('searchPlaceholder'),
             'aria-label': t('searchPlaceholder'),
             onChange: (event) => setQuery(event.target.value),
           }),
-          h('button', { type: 'button', style: styles.primaryButton, onClick: () => setEditing({ mode: 'add' }) }, t('add')),
-          h('button', { type: 'button', style: styles.primaryButton, onClick: () => setImporting(true) }, t('import')),
-          h('button', { type: 'button', style: styles.button, onClick: () => setExporting(true) }, t('export'))),
+          h('div', { style: styles.inlineRow },
+            h('button', { type: 'button', className: 'mcpmm-btn mcpmm-btn--primary', style: styles.primaryButton, onClick: () => setEditing({ mode: 'add' }) }, t('add')),
+            h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => setImporting(true) }, t('import')),
+            h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => setExporting(true) }, t('export')))),
 
         editing
           ? h(EditPanel, {
@@ -2407,19 +2619,20 @@ window.__ModuleLoader__.load({
         }),
 
         servers.length === 0 || filtered.length === 0
-          ? h('p', { style: styles.hint }, viewMode === 'apps' ? t('apps.empty') : t('empty'))
-          : viewMode === 'flat'
-            ? h('div', { style: styles.table, role: 'table', 'aria-label': t('title') },
-              h('div', {
-                style: { ...styles.rowMain, ...styles.summary, borderBottom: '1px solid var(--dsw-alias-border-l2)' },
-                role: 'row',
+          ? h('div', { style: styles.emptyState },
+            h('span', { style: styles.emptyIcon, 'aria-hidden': 'true' },
+              h('svg', {
+                width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none',
+                stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round',
               },
-              h('span', { role: 'columnheader' }, t('column.server')),
-              h('span', { role: 'columnheader' }, t('column.status')),
-              h('span', { role: 'columnheader' }, t('column.transport')),
-              h('span', { role: 'columnheader' }, t('column.tools')),
-              h('span', { role: 'columnheader' }, t('column.actions'))),
-              filtered.map((server) => renderServer(server)))
+              h('path', { d: 'M9 7V3M15 7V3' }),
+              h('path', { d: 'M6 7h12v4a6 6 0 0 1-12 0V7Z' }),
+              h('path', { d: 'M12 17v4' }))),
+            h('p', { style: styles.emptyText }, viewMode === 'apps' ? t('apps.empty') : t('empty')))
+          : viewMode === 'flat'
+            ? h('div', { style: styles.groupCard },
+              h('div', { style: styles.table, role: 'table', 'aria-label': t('title') },
+                filtered.map((server) => renderServer(server))))
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
               cardGroups.map((group) => h(AppGroupCard, {
                 key: group.app.id,
@@ -2434,7 +2647,7 @@ window.__ModuleLoader__.load({
                 busy: appBusy === group.app.id,
               })),
               singletonRows.length > 0
-                ? h('div', { style: styles.groupCard },
+                ? h('div', { className: 'mcpmm-card mcpmm-group-card', style: styles.groupCard },
                   h('h4', { style: styles.panelTitle, title: t('apps.independent') }, t('apps.independent')),
                   h('div', { style: styles.table, role: 'table', 'aria-label': t('apps.independent') },
                     singletonRows.map((item) => renderServer(item.server, `${item.app.icon ? `${item.app.icon} ` : ''}${String(item.app.name ?? '')}`))))
