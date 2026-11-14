@@ -1308,3 +1308,157 @@ test('v0.5 tool outputs conform to their declared output schemas', async (t) => 
     assert.equal(typeof rendered[0].text, 'string');
   }
 });
+
+// ─── v0.5.1：!!js 表达式求值 / PATH 补齐 / 端点指纹 ──────────────────────────
+
+test('resolveExpression only evaluates the documented safe forms', async () => {
+  const { resolveExpression, resolveRecordExpressions } = await import('../lib/expr.js');
+  const env = { TOKEN_X: 'secret', EMPTY: '' };
+  assert.deepEqual(resolveExpression('plain', { env }), { resolved: true, value: 'plain' });
+  assert.deepEqual(resolveExpression({ __jsExpr: 'process.env.TOKEN_X' }, { env }), { resolved: true, value: 'secret' });
+  assert.deepEqual(resolveExpression({ __jsExpr: "process.env.MISSING ?? 'fallback'" }, { env }), { resolved: true, value: 'fallback' });
+  assert.deepEqual(resolveExpression({ __jsExpr: "process.env.EMPTY || '/tmp'" }, { env }), { resolved: true, value: '/tmp' });
+  assert.deepEqual(resolveExpression({ __jsExpr: 'String(process.env.TOKEN_X)' }, { env }), { resolved: true, value: 'secret' });
+  assert.deepEqual(resolveExpression({ __jsExpr: "'literal'" }, { env }), { resolved: true, value: 'literal' });
+  // 未定义变量 / 复杂表达式一律不求值（绝不 eval）
+  assert.equal(resolveExpression({ __jsExpr: 'process.env.MISSING' }, { env }).resolved, false);
+  assert.equal(resolveExpression({ __jsExpr: 'computeUrl()' }, { env }).resolved, false);
+  assert.equal(resolveExpression({ __jsExpr: 'process.env.A + process.env.B' }, { env }).resolved, false);
+
+  const record = {
+    serverName: 's',
+    transport: 'streamable-http',
+    url: { __jsExpr: 'process.env.TOKEN_X' },
+    headers: { Authorization: { __jsExpr: 'process.env.TOKEN_X' } },
+  };
+  const out = resolveRecordExpressions(record, { env });
+  assert.equal(out.unresolved.length, 0);
+  assert.equal(out.record.url, 'secret');
+  assert.equal(out.record.headers.Authorization, 'secret');
+  const bad = resolveRecordExpressions({ url: { __jsExpr: 'x()' }, args: ['ok', { __jsExpr: 'y()' }] }, { env });
+  assert.deepEqual(bad.unresolved.map((item) => item.path), ['url', 'args[1]']);
+});
+
+test('augmentedPath adds node directories without dropping the existing PATH', async () => {
+  const { augmentedPath } = await import('../lib/path.js');
+  const { chmod, mkdir, writeFile } = await import('node:fs/promises');
+  const home = await mkdtemp(join(tmpdir(), 'mcp-manager-path-'));
+  const bin = join(home, '.nvm', 'versions', 'node', 'v99.1.0', 'bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'node'), '#!/bin/sh\n', 'utf8');
+  await chmod(join(bin, 'node'), 0o755);
+
+  const path = augmentedPath('/usr/bin:/bin', { home, execPath: '/nonexistent/bin/node' });
+  assert.match(path, /\/usr\/bin:\/bin/);
+  assert.ok(path.split(':').indexOf(bin) >= 0, 'nvm bin 应被补进 PATH');
+  assert.ok(path.split(':').indexOf(bin) < path.split(':').indexOf('/usr/bin'), 'node 目录应排在前面');
+  // 原有目录永远保留（补全只增不减）
+  const bare = augmentedPath('/custom/bin', { home: join(home, 'empty'), execPath: '/nonexistent/node' });
+  assert.ok(bare.split(':').includes('/custom/bin'));
+});
+
+test('probe resolves !!js url and header expressions from a profile entry', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', (chunk) => { body += chunk; });
+    request.on('end', () => {
+      if (request.headers.authorization !== 'Bearer good-token') {
+        response.statusCode = 401;
+        response.end('unauthorized');
+        return;
+      }
+      let message = {};
+      try { message = JSON.parse(body); } catch { /* ignore */ }
+      response.setHeader('content-type', 'application/json');
+      if (message.method === 'initialize') {
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'js-expr-stub', version: '1' } } }));
+        return;
+      }
+      if (message.method === 'tools/list') {
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'a' }] } }));
+        return;
+      }
+      response.statusCode = 202;
+      response.end('');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  process.env.MCP_MANAGER_TEST_URL = `http://127.0.0.1:${port}/mcp`;
+  process.env.MCP_MANAGER_TEST_AUTH = 'Bearer good-token';
+  t.after(() => {
+    delete process.env.MCP_MANAGER_TEST_URL;
+    delete process.env.MCP_MANAGER_TEST_AUTH;
+  });
+
+  loader.addEntry({
+    id: 'mcp-js-expr',
+    config: {
+      serverName: 'js-expr',
+      transport: 'streamable-http',
+      url: { __jsExpr: 'process.env.MCP_MANAGER_TEST_URL' },
+      headers: { Authorization: { __jsExpr: 'process.env.MCP_MANAGER_TEST_AUTH' } },
+    },
+  });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  const probed = await manager.probe('js-expr');
+  assert.equal(probed.ok, true, probed.error);
+  assert.equal(probed.toolCount, 1);
+});
+
+test('probe reports unresolved expressions instead of a bogus 401', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  loader.addEntry({
+    id: 'mcp-bad-expr',
+    config: {
+      serverName: 'bad-expr',
+      transport: 'streamable-http',
+      url: { __jsExpr: 'buildUrl()' },
+    },
+  });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await assert.rejects(
+    () => manager.probe('bad-expr'),
+    (error) => /无法求值的 !!js 表达式/.test(error.message) && error.code === 'probe-unresolved-expression',
+  );
+});
+
+test('doctor compares stdio endpoints by command + args, not by display string', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  // 展示串相同（node +1 个参数），但 args 不同 → 不是重复端点
+  loader.addEntry({ id: 'mcp-z1', config: { serverName: 'z-one', transport: 'stdio', command: process.execPath, args: ['a.mjs'] } });
+  loader.addEntry({ id: 'mcp-z2', config: { serverName: 'z-two', transport: 'stdio', command: process.execPath, args: ['b.mjs'] } });
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  const report = manager.doctor();
+  assert.ok(!report.findings.some((finding) => finding.code === 'duplicate-endpoint'));
+
+  // 完全相同的 command + args → 才是重复端点
+  loader.addEntry({ id: 'mcp-z3', config: { serverName: 'z-three', transport: 'stdio', command: process.execPath, args: ['a.mjs'] } });
+  const again = manager.doctor();
+  const duplicate = again.findings.find((finding) => finding.code === 'duplicate-endpoint');
+  assert.ok(duplicate);
+  assert.match(duplicate.detail, /z-one/);
+  assert.match(duplicate.detail, /z-three/);
+});
+
+test('doctor resolves stdio commands against the augmented PATH', async () => {
+  const { buildDoctorReport } = await import('../lib/doctor.js');
+  const report = buildDoctorReport({
+    env: { PATH: '' }, // GUI 启动的宿主就是这种极简 PATH
+    servers: [{
+      id: 'x', serverName: 'x', origin: 'profile', transport: 'stdio',
+      enabled: true, loaded: true, status: 'connected', toolCount: 1, tools: [],
+    }],
+    declaredOf: () => ({ serverName: 'x', transport: 'stdio', command: 'node' }),
+    prefsServers: {},
+  });
+  assert.ok(!report.findings.some((finding) => finding.code === 'command-missing'));
+});

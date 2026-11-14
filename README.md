@@ -22,7 +22,7 @@ VS Code / Codex. Zero npm dependencies.
 | 接入新服务 | `mcp_manager_add` / 新增表单 | `streamable-http` 或 `stdio`；默认写入受管存储，重启自动恢复 |
 | 编辑已有服务 | `mcp_manager_update` / 编辑表单 | URL / headers / command / args / env / cwd / 超时；高级项 `reconnect` / `failOnStartupError` / `maxInstructionBytes`；密钥三态（保留/覆盖/删除） |
 | 移除服务 | `mcp_manager_remove` / 删除按钮 | 受管：删记录+条目；profile：仅本次运行 |
-| **握手探针 + 历史** | `mcp_manager_probe` / 探针按钮 | 真实 initialize + tools/list：延迟、协议版本、工具数、结构化错误码、stderr（已脱敏）；每次结果进历史（最近 20 次） |
+| **握手探针 + 历史** | `mcp_manager_probe` / 探针按钮 | 真实 initialize + tools/list：延迟、协议版本、工具数、结构化错误码、stderr（已脱敏）；每次结果进历史（最近 20 次）。v0.5.1 起自动解析 profile 行里的 `!!js process.env.*`，并给 stdio 子进程补齐 node 所在 PATH |
 | **批量探针** | `mcp_manager_probe_many` / 「全部探测」 | 默认探测所有已启用服务，并发可调；面板顶部显示健康概览与最近成功率 |
 | **工具浏览** | `mcp_manager_tools` / 「工具中心」 | 跨服务搜工具；可按服务过滤、可选附带参数 JSON Schema |
 | **在线试用工具** | `mcp_manager_call_tool` / 工具抽屉 | 走宿主 `ctx.tools.execute`（与模型同一执行管线，不绕过 guard/审批）；`dryRun` 预检、超时、结果截断标记 |
@@ -225,6 +225,10 @@ npm test                          # 三套一起跑
   它的环境变量判断基于插件进程的 `process.env` 与记录自身的 `env`，不解析 shell 的 profile；
 - 「Token 账本」是启发式估算（CJK 1 token/字、其余 3.5 字符/token，误差约 ±20%），
   只用于服务之间横向比较，不要当成计费依据；统计范围是已注册的工具（不含资源/提示词）；
+- 探针对 `!!js` 只求值四种确定安全的形态（`process.env.NAME` / `process.env.NAME ?? "默认值"` /
+  `String(process.env.NAME)` / 字符串字面量），复杂表达式会明确报 `probe-unresolved-expression`，
+  不会 `eval`；PATH 补齐是启发式（进程目录 + nvm 最新版 + 常见用户目录），
+  自定义安装路径（如自建 node 目录）仍可能需要用绝对路径写 `command`；
 - 探针 tools/list 只取第一页（不翻 cursor），工具数特别多的服务可能少算；
 - 不做 OAuth 授权流：需要 OAuth 的服务请自行获取 token 后用 `headers`/`env` 传入；
 - 受管存储是明文 JSON（0600 权限），与 `~/.dsh/.env` 同级信任模型；不要把它提交进 git；

@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.5.1] — 2026-11-14
+
+v0.5.0 的体检在真实环境（29 个服务 / 300 个工具）里查出的两个探针缺陷 + 一个误报，全部修掉。
+用真实凭据在进程外复测：amap 15 工具、qcc-company 16、pkulaw-case-keyword 1、feishu-openapi 19，此前这 4 个全是「探针失败」。
+
+### Fixed
+
+- **探针不解析 `!!js` 表达式（qcc ×8、pkulaw ×9 全部假 401）**：profile 里
+  `headers.Authorization: !!js process.env.QCC_AUTH_HEADER` / `url: !!js process.env.AMAP_MCP_URL`
+  在 `fiber.config` 里仍是 `{ __jsExpr }` 对象；探针直接塞给 `fetch`，凭据头变成 `[object Object]`，
+  amap 还会报 `Failed to parse URL from [object Object]`。新增 `lib/expr.js`：
+  只求值 `process.env.NAME` / `process.env.NAME ?? "默认值"` / `String(process.env.NAME)` / 字符串字面量
+  四种形态（绝不 `eval`），其余情况返回 `probe-unresolved-expression` 并列出字段路径，
+  不再伪装成「服务 401」。
+- **GUI 宿主的 PATH 太窄（feishu-openapi 127）**：从 Finder/Launchpad 启动的 DSH，
+  `process.env.PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，`npx` 的 `#!/usr/bin/env node`
+  找不到 node，子进程以 127 退出（`env: node: No such file or directory`）。新增 `lib/path.js`：
+  探针子进程启动前把「确定含 node 的目录」（进程目录、nvm 最新版、`~/.local/bin`、`/opt/homebrew/bin`、
+  `/usr/local/bin`）补到 PATH 前面，再追加常见用户级目录；只增不减。体检的 `command-missing`
+  判断用同一套 PATH，避免误报。
+- **重复端点误报（zhihu ×3）**：体检此前用展示串比较端点，stdio 的展示串只有「命令名 + 参数个数」，
+  三个 zhihu 服务都显示 `node（+4 个参数）`，被当成同一端点。现在 stdio 用
+  `command + 完整 args` 的指纹比较，http 仍比 URL（`!!js` 比表达式原文）。
+
+### Tests
+
+- 88 个用例全绿（host 53 + web 6 + client 29）。新增 6 个：表达式求值（含拒绝复杂表达式）、
+  PATH 补齐（只增不减、node 目录前置）、profile 行 `!!js` url/header 探针成功、
+  未求值表达式的明确报错、stdio 端点指纹、极简 PATH 下的 `command-missing` 不误报。
+
 ## [0.5.0] — 2026-11-14
 
 「管得住」：体检（doctor）· Token 账本 · 接入片段。全部只读、离线可测，不改任何现有语义。
