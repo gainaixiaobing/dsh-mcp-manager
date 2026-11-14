@@ -564,6 +564,7 @@ test('registered tools declare schemas accepted by the harness subset', async (t
     'mcp_manager_add',
     'mcp_manager_apps',
     'mcp_manager_call_tool',
+    'mcp_manager_doctor',
     'mcp_manager_export',
     'mcp_manager_import',
     'mcp_manager_inspect',
@@ -574,7 +575,9 @@ test('registered tools declare schemas accepted by the harness subset', async (t
     'mcp_manager_remove',
     'mcp_manager_scan',
     'mcp_manager_set_enabled',
+    'mcp_manager_snippet',
     'mcp_manager_store_repair',
+    'mcp_manager_tokens',
     'mcp_manager_tools',
     'mcp_manager_update',
   ]);
@@ -1074,4 +1077,234 @@ test('renameApp overrides a whole app group and can be reset', async (t) => {
   const reset = manager.state();
   assert.equal(reset.servers.find((server) => server.serverName === 'fuyao-fund').app.source, 'catalog');
   await assert.rejects(() => manager.renameApp('不存在的应用', 'x'), /找不到应用分组/);
+});
+
+// ─── v0.5：体检 / Token 账本 / 接入片段 ──────────────────────────────────────
+
+test('doctor flags missing env vars, unresolvable commands and duplicate names', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, loader } = makeCtx();
+  // 两条 profile 行共用 serverName dup：同名条目会互相顶掉 fiber，是常见 failed 原因。
+  loader.addEntry({ id: 'mcp-dup-1', config: { serverName: 'dup', transport: 'streamable-http', url: 'https://dup.example/a/mcp' } });
+  loader.addEntry({ id: 'mcp-dup-2', config: { serverName: 'dup', transport: 'streamable-http', url: 'https://dup.example/b/mcp' } });
+  await seedStore(storePath, [
+    // PATH 里不存在的命令
+    { serverName: 'ghost', command: 'definitely-not-a-real-command-xyz' },
+    // 引用了未定义的环境变量
+    {
+      serverName: 'needs-env',
+      transport: 'streamable-http',
+      url: 'https://env.example/mcp',
+      headers: { Authorization: 'Bearer ${MCP_MANAGER_TEST_MISSING_ABC}' },
+    },
+    // 工作目录不存在
+    { serverName: 'bad-cwd', command: process.execPath, args: [STUB], cwd: '/definitely/not/a/real/directory' },
+  ]);
+
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  const report = manager.doctor();
+
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('command-missing'), 'stdio command 不在 PATH 应报 command-missing');
+  assert.ok(codes.includes('env-missing'), '未定义的 ${VAR} 应报 env-missing');
+  assert.ok(codes.includes('cwd-missing'), '不存在的 cwd 应报 cwd-missing');
+  assert.ok(codes.includes('duplicate-name'), '同名条目应报 duplicate-name');
+  assert.ok(report.summary.error >= 2);
+  assert.ok(report.summary.findings === report.findings.length);
+
+  // 站点过滤：只看 ghost 时不应出现别的服务的条目
+  const only = manager.doctor({ server: 'ghost' });
+  assert.ok(only.findings.every((finding) => finding.serverName === undefined || finding.serverName === 'ghost'));
+  assert.ok(only.findings.some((finding) => finding.serverName === 'ghost'));
+
+  // severity 过滤
+  const errors = manager.doctor({ severity: 'error' });
+  assert.ok(errors.findings.every((finding) => finding.severity === 'error'));
+
+  // includeInfo=false 去掉提示级
+  const noInfo = manager.doctor({ includeInfo: false });
+  assert.ok(noInfo.findings.every((finding) => finding.severity !== 'info'));
+});
+
+test('doctor stays quiet for a healthy managed server', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'healthy', transport: 'stdio', command: process.execPath, args: [STUB] });
+  const report = manager.doctor();
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(!codes.includes('status-failed'));
+  assert.ok(!codes.includes('status-not-provisioned'));
+  assert.ok(!codes.includes('command-missing'));
+  assert.ok(!codes.includes('env-missing'));
+});
+
+test('token ledger ranks servers by registered schema size', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx, tools } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+
+  tools.register({ name: 'mcp__big__wide', description: 'x'.repeat(4000), parameters: { type: 'object', properties: {} } });
+  tools.register({ name: 'mcp__small__tiny', description: 'y'.repeat(40), parameters: { type: 'object', properties: {} } });
+  tools.register({ name: 'not_mcp_tool', description: 'ignored' });
+
+  const report = manager.tokens();
+  assert.equal(report.toolCount, 2);
+  assert.ok(report.totalTokens > 0);
+  assert.equal(report.servers[0].serverName, 'big');
+  assert.ok(report.servers[0].share > 0.9);
+  assert.equal(report.topTools[0].toolName, 'wide');
+  assert.ok(report.topTools[0].tokens > 1000);
+
+  // 中文描述按字计 token：估算器不能把中文当 3.5 字符/token
+  const { estimateTokens } = await import('../lib/tokens.js');
+  assert.equal(estimateTokens('中文描述'), 4);
+  assert.ok(estimateTokens('abcdefg') <= 2);
+});
+
+test('snippet renders every client target and redacts credentials', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({
+    serverName: 'share-http',
+    transport: 'streamable-http',
+    url: 'https://share.example/mcp?token=supersecretvalue',
+    headers: { Authorization: 'Bearer supersecretvalue123456' },
+  });
+  await manager.add({
+    serverName: 'share-stdio',
+    transport: 'stdio',
+    command: process.execPath,
+    args: [STUB, '--api-key', 'sk-livesecret1234567890'],
+  });
+
+  for (const target of ['dsh-patch', 'cursor', 'vscode', 'claude-code', 'codex']) {
+    const snippet = manager.snippet({ target });
+    assert.equal(snippet.target, target);
+    assert.equal(snippet.recordCount, 2);
+    assert.ok(snippet.content.length > 0);
+    assert.ok(!snippet.content.includes('supersecretvalue'), `${target} 不应包含明文 header 凭据`);
+    assert.ok(!snippet.content.includes('sk-livesecret1234567890'), `${target} 不应包含明文 args 凭据`);
+  }
+
+  const cursor = JSON.parse(manager.snippet({ target: 'cursor' }).content);
+  assert.deepEqual(Object.keys(cursor.mcpServers).sort(), ['share-http', 'share-stdio']);
+
+  const vscode = JSON.parse(manager.snippet({ target: 'vscode' }).content);
+  assert.equal(vscode.servers['share-http'].type, 'http');
+  assert.equal(vscode.servers['share-stdio'].type, 'stdio');
+
+  const claude = manager.snippet({ target: 'claude-code' }).content;
+  assert.ok(claude.includes('claude mcp add'));
+  assert.ok(claude.includes('--transport http'));
+
+  const codex = manager.snippet({ target: 'codex' }).content;
+  assert.ok(codex.includes('[mcp_servers.share-stdio]'));
+  assert.ok(codex.includes('command = '));
+
+  // 单服务选择
+  const single = manager.snippet({ target: 'cursor', server: 'share-http' });
+  assert.equal(single.recordCount, 1);
+  assert.throws(() => manager.snippet({ target: 'nope' }), /不支持的目标/);
+});
+
+test('state exposes token ledger and per-server schema tokens', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'ledger-srv', transport: 'stdio', command: process.execPath, args: [STUB] });
+  const state = manager.state();
+  assert.ok(state.tokens.totalTokens > 0);
+  assert.equal(state.tokens.toolCount, state.summary.toolCount);
+  const server = state.servers.find((item) => item.serverName === 'ledger-srv');
+  assert.ok(server.schemaTokens > 0);
+  assert.ok(Array.isArray(state.tokens.servers));
+  assert.ok(Array.isArray(state.tokens.topTools));
+});
+
+test('doctor placeholder parsing covers env/input/default/!!js forms', async () => {
+  const { findPlaceholders, findJsEnvRefs, commandResolves } = await import('../lib/doctor.js');
+  assert.deepEqual(findPlaceholders('https://x/mcp?key=${AMAP_KEY}'), [
+    { raw: '${AMAP_KEY}', kind: 'env', name: 'AMAP_KEY', hasDefault: false },
+  ]);
+  assert.deepEqual(findPlaceholders('${env:QCC_TOKEN}').map((item) => item.name), ['QCC_TOKEN']);
+  assert.deepEqual(findPlaceholders('${X:-fallback}').map((item) => [item.name, item.hasDefault]), [['X', true]]);
+  assert.deepEqual(findPlaceholders('${input:apiKey}').map((item) => [item.kind, item.name]), [['input', 'apiKey']]);
+  assert.deepEqual(findPlaceholders('no placeholders'), []);
+  assert.deepEqual(findJsEnvRefs('process.env.A || process.env.B'), ['A', 'B']);
+  assert.deepEqual(findJsEnvRefs("'literal'"), []);
+  // 命令解析：node 一定在 PATH；不存在的命令一定不在
+  assert.equal(commandResolves(process.execPath), true);
+  assert.equal(commandResolves('definitely-not-a-real-command-xyz'), false);
+  assert.equal(commandResolves('node', { PATH: process.env.PATH ?? '' }), true);
+  assert.equal(commandResolves('', {}), false);
+});
+
+test('doctor downgrades config findings for disabled servers to warn', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'parked', transport: 'stdio', command: 'also-not-a-real-binary-xyz', enabled: false });
+  const report = manager.doctor();
+  const finding = report.findings.find((item) => item.serverName === 'parked' && item.code === 'command-missing');
+  assert.ok(finding, '停用服务仍应报出配置问题');
+  assert.equal(finding.severity, 'warn', '停用服务不该刷 red error');
+});
+
+/** 按声明的 JSON Schema 子集校验值：类型 + additionalProperties:false 时不允许额外字段。 */
+function assertShape(value, schema, path = '$') {
+  if (schema === undefined) return;
+  if (schema.type === 'object') {
+    assert.equal(typeof value, 'object', `${path} 应为对象`);
+    assert.ok(value !== null && !Array.isArray(value), `${path} 不应为 null/数组`);
+    const properties = schema.properties ?? {};
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        assert.ok(Object.hasOwn(properties, key), `${path}.${key} 未在 output schema 中声明`);
+      }
+    }
+    for (const name of schema.required ?? []) {
+      assert.ok(Object.hasOwn(value, name), `${path}.${name} 缺失`);
+    }
+    for (const [key, child] of Object.entries(properties)) {
+      if (Object.hasOwn(value, key) && value[key] !== undefined) assertShape(value[key], child, `${path}.${key}`);
+    }
+    return;
+  }
+  if (schema.type === 'array') {
+    assert.ok(Array.isArray(value), `${path} 应为数组`);
+    if (schema.items !== undefined) value.forEach((item, index) => assertShape(item, schema.items, `${path}[${index}]`));
+    return;
+  }
+  if (schema.type === 'string') { assert.equal(typeof value, 'string', `${path} 应为字符串`); return; }
+  if (schema.type === 'integer') { assert.ok(Number.isInteger(value), `${path} 应为整数`); return; }
+  if (schema.type === 'number') { assert.ok(Number.isFinite(value), `${path} 应为数字`); return; }
+  if (schema.type === 'boolean') { assert.equal(typeof value, 'boolean', `${path} 应为布尔值`); return; }
+}
+
+test('v0.5 tool outputs conform to their declared output schemas', async (t) => {
+  const storePath = await tempStore(t);
+  const { ctx } = makeCtx();
+  const manager = createManager(ctx, { storePath });
+  await manager.init();
+  await manager.add({ serverName: 'shape-ok', transport: 'stdio', command: process.execPath, args: [STUB] });
+  await manager.add({ serverName: 'shape-bad', transport: 'stdio', command: 'definitely-not-a-real-command-xyz', enabled: false });
+  registerTools(ctx, manager);
+
+  for (const name of ['mcp_manager_doctor', 'mcp_manager_tokens', 'mcp_manager_snippet']) {
+    const definition = ctx.tools.defs.get(name);
+    assert.ok(definition, `${name} 应已注册`);
+    const value = await definition.execute({});
+    assertShape(value, definition.output.schema, `${name}()`);
+    const rendered = definition.output.render({}, value);
+    assert.ok(Array.isArray(rendered) && rendered.length > 0);
+    assert.equal(typeof rendered[0].text, 'string');
+  }
 });

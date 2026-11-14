@@ -3,9 +3,9 @@
 三个测试套件全部离线（不启动 Harness，不发外部网络请求）：
 
 ```bash
-node --test test/host.test.mjs    # Host 半区：存储/清单/导入导出/探针/工具/偏好/安全/契约
-node --test test/web.test.mjs     # 同源 HTTP API：token 鉴权、回环/Origin/IPv6、白名单、state
-node --test test/client.test.mjs  # Web UI：模块注册、槽位、列表、工具抽屉、探针、导出
+node --test test/host.test.mjs    # Host 半区：存储/清单/导入导出/探针/工具/偏好/安全/契约 + 体检/Token/片段
+node --test test/web.test.mjs     # 同源 HTTP API：token 鉴权、回环/Origin/IPv6、白名单、state、doctor/tokens/snippet
+node --test test/client.test.mjs  # Web UI：模块注册、槽位、列表、工具抽屉、探针、导出、体检面板、token 概览
 npm test                          # 三套一起跑
 ```
 
@@ -51,3 +51,14 @@ curl -s -H "x-mcp-manager-token: $TOKEN" -H 'content-type: application/json' \
 > 面板操作统一传 loader 条目 id（`GET /state` 的 `servers[].id`），同名服务也能精确操作。
 
 验证完删除临时 profile（`rm -rf ~/.dsh/profiles/mcphead-test`）。
+
+## v0.5 手动验证清单
+
+重启 DSH 后（Host 半区只在进程启动时加载，刷新页面不够）：
+
+1. 设置 → MCP 服务 → 头部「体检」：应列出分级发现；没有问题时显示「没有发现问题」；
+2. summary 行下方应出现「工具 schema 约 XXk tokens（N 个工具，平均 …）」；每行工具数旁有 `~1.2k tok`；
+3. 对话里问「给全部服务做个体检」「谁在吃 token」「生成一份 Cursor 的接入片段」，应分别命中
+   `mcp_manager_doctor` / `mcp_manager_tokens` / `mcp_manager_snippet`；
+4. 导出面板 →「接入片段」→ 切换 DSH patch / Cursor / VS Code / Claude Code / Codex，
+   内容里不应出现明文凭据（应看到 `${…}` 占位符）。

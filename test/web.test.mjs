@@ -242,3 +242,42 @@ test('mountWebApi respects webApi:false', async (t) => {
   const { route } = await setup(t, { webApi: false });
   assert.equal(route, undefined);
 });
+
+test('web API exposes doctor, tokens and snippet actions', async (t) => {
+  const { route, taps, manager } = await setup(t);
+  const token = tokenFromTaps(taps);
+  await manager.add({ serverName: 'web-two', transport: 'stdio', command: process.execPath, args: ['--version'] });
+
+  const doctor = await callAction(route, token, 'doctor', { includeInfo: false });
+  assert.equal(doctor.status, 200);
+  assert.ok(doctor.payload.result.summary);
+  assert.ok(Array.isArray(doctor.payload.result.findings));
+  assert.ok(doctor.payload.result.findings.every((finding) => finding.severity !== 'info'));
+
+  const tokens = await callAction(route, token, 'tokens', { top: 3 });
+  assert.equal(tokens.status, 200);
+  assert.ok(tokens.payload.result.totalTokens > 0);
+  assert.ok(tokens.payload.result.topTools.length <= 3);
+
+  const snippet = await callAction(route, token, 'snippet', { target: 'cursor' });
+  assert.equal(snippet.status, 200);
+  assert.equal(snippet.payload.result.target, 'cursor');
+  assert.ok(snippet.payload.result.content.includes('web-two'));
+
+  const bad = await callAction(route, token, 'snippet', { target: 'unknown-client' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.payload.message, /不支持的目标/);
+});
+
+test('state payload includes the token ledger without tool descriptions', async (t) => {
+  const { route, taps, manager } = await setup(t);
+  const token = tokenFromTaps(taps);
+  await manager.add({ serverName: 'ledger-web', transport: 'streamable-http', url: 'https://ledger.example/mcp' });
+  const response = makeResponse();
+  await route.handler(makeRequest({ headers: { host: '127.0.0.1:61907', 'x-mcp-manager-token': token } }), response);
+  const payload = JSON.parse(response.body);
+  assert.ok(payload.tokens.totalTokens > 0);
+  assert.ok(Array.isArray(payload.tokens.servers));
+  const server = payload.servers.find((item) => item.serverName === 'ledger-web');
+  assert.ok(server.schemaTokens > 0);
+});

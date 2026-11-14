@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.5.0] — 2026-11-14
+
+「管得住」：体检（doctor）· Token 账本 · 接入片段。全部只读、离线可测，不改任何现有语义。
+
+### Added
+
+- **体检（doctor）**：`mcp_manager_doctor` + 设置页「体检」面板 + `action: "doctor"`。
+  一次静态检查覆盖 10 类问题：加载失败 / 未生效 / 无工具、stdio `command` 不在 PATH、
+  `cwd` 不存在、`${VAR}` / `${env:VAR}` / `${input:…}` / `!!js process.env.X` 引用的变量缺失、
+  空 env 值、明文凭据与 `$()`/反引号参数、同名条目、重复端点、受管记录与运行时 `enabled` 漂移、
+  孤儿工具、最近一次探针失败、从未探测。每条发现带 `severity`（error/warn/info）、
+  可读 `detail` 与 `fix` 建议；支持按服务 / 严重度过滤，面板可一键复制报告；
+  带服务名的发现可点「查看服务」直接跳到列表（填入搜索框并收起体检面板）。
+- **Token 账本**：`mcp_manager_tokens` + `action: "tokens"` + 面板概览与服务行徽章。
+  按服务统计已注册工具 schema 的文本量并估算 token（CJK 1 token/字、其余 3.5 字符/token），
+  返回每个服务的工具数、tokens、占比、平均每工具 tokens，以及最贵的 N 个工具。
+  `state` 新增 `tokens` 与每个 `server.schemaTokens`，面板每 15s 轮询仍只算一遍 schema。
+- **接入片段**：`mcp_manager_snippet` + 导出面板「接入片段」。
+  支持 `dsh-patch`（cordis.patch.yml）、`cursor`（mcpServers JSON）、`vscode`（.vscode/mcp.json）、
+  `claude-code`（`claude mcp add …` 命令）、`codex`（config.toml）；默认脱敏，
+  与导出共用同一套规则（URL query / `--flag` 参数 / 凭据型 header、env → `${ENV}`）。
+- 新增 `research/v0.5-github-survey.md`：本轮 GitHub 调研（10 个项目）与采纳/不采纳理由。
+
+### Changed
+
+- `listServers` 支持注入工具 schema（`options.schemas`），`state()` 复用它同时产出清单与 token 账本，
+  避免每次轮询把 `ctx.tools.schemas()` 取两遍。
+- 受管服务的清单项新增 `recordEnabled`（存储里的启停状态），用于体检的一致性检查。
+
+### Fixed
+
+- 体检能提前暴露「配置看似完整、实际起不来」的三类高频原因：变量没配、命令不在 PATH、
+  profile 行与受管记录同名（后者会互相顶掉 fiber）。
+
+### Tests
+
+- 82 个用例全绿（host 47 + web 6 + client 29）。新增 16 个：体检（缺变量/缺命令/缺 cwd/同名/过滤/跳转）、
+  健康服务不误报、停用服务降级为 warn、占位符解析（env/input/default/!!js/命令解析）、
+  token 排行与估算器、5 种片段目标与脱敏、state token 字段、工具输出与 output schema 一致性、
+  体检面板交互、token 概览渲染、片段目标切换、主题令牌白名单（防再次引用不存在的 `--dsw-alias-*`）。
+
 ## [0.4.4] — 2026-11-05
 
 设置页视觉重构（无功能与接口变更）。

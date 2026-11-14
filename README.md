@@ -1,13 +1,15 @@
 # dsh-mcp-manager
 
-> 一个**轻量版 MCP 服务管理器 + 调试台**：管理本机已经接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 MCP 服务，
+> 一个**轻量版 MCP 服务管理器 + 调试台 + 体检台**：管理本机已经接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 MCP 服务，
 > 能按应用归类（高德地图 / 同花顺 / 企查查…）、看服务健康、浏览并在线试用工具、收藏打标签，
-> 也能从 Claude Desktop / Cursor / VS Code 等客户端扫描、导入配置。
+> 也能从 Claude Desktop / Cursor / VS Code 等客户端扫描、导入配置；
+> v0.5 起还能**体检**（为什么起不来）、算 **Token 账本**（谁在吃上下文）、生成**接入片段**（一次配好五个客户端）。
 > 不做插件市场、不做远程目录、不做 OAuth 授权流——只把「本机 MCP」管好。
 
-A lightweight MCP server manager & debug console for DeepSeek Harness (DSH): inspect, enable/disable, add, edit,
-remove, probe with history, browse and invoke MCP tools, import from and export to the common `mcpServers` JSON
-convention. Zero npm dependencies.
+A lightweight MCP server manager, debug console and health checker for DeepSeek Harness (DSH): inspect,
+enable/disable, add, edit, remove, probe with history, browse and invoke MCP tools, run a static checkup,
+measure each server's tool-schema token footprint, and generate client snippets for Claude Code / Cursor /
+VS Code / Codex. Zero npm dependencies.
 
 ## 它做什么
 
@@ -28,6 +30,9 @@ convention. Zero npm dependencies.
 | **扫描本机配置** | `mcp_manager_scan` / 导入向导 | Claude Desktop / Claude Code / Cursor / Windsurf / VS Code / Cline / Zed / Continue |
 | **导入 `mcpServers` JSON** | `mcp_manager_import` / 粘贴 JSON 或扫描结果 | 先预览（新增/冲突）再写；冲突支持跳过/覆盖受管/自动改名；可导入为停用；支持 JSONC |
 | **导出** | `mcp_manager_export` / 导出面板 | `patch`（cordis.patch.yml）/ `json`（`mcpServers`）/ `markdown` 清单 / `diagnostics` 诊断报告 |
+| **体检（v0.5）** | `mcp_manager_doctor` / 「体检」按钮 | 静态诊断（不联网）：加载失败/未生效/无工具、stdio 命令不在 PATH、cwd 不存在、`${VAR}` / `!!js process.env.X` 缺变量、`${input:…}`、空 env、明文凭据、同名条目、重复端点、enabled 漂移、孤儿工具、探针失败；每条给 severity + 修复建议 |
+| **Token 账本（v0.5）** | `mcp_manager_tokens` / 面板概览 + 行内徽章 | 按服务统计工具 schema 的文本量并估算 token（CJK 1 token/字、其余 3.5 字符/token）；给出占比、平均每工具 tokens 与最贵工具排行 |
+| **接入片段（v0.5）** | `mcp_manager_snippet` / 导出面板「接入片段」 | 一次生成 `dsh-patch` / `cursor` / `vscode` / `claude-code`（`claude mcp add`）/ `codex` 五种片段；默认脱敏，与导出共用规则 |
 | **静态风险提示** | 服务对象 `riskFlags` | URL query 明文凭据、字面量 header/env 凭据、`--token` 参数、`$()`/反引号参数 |
 | **存储修复** | `mcp_manager_store_repair` | 受管存储损坏时改名备份后重置，不用手动删文件 |
 
@@ -81,9 +86,12 @@ cd dsh-mcp-manager
   - 默认「按应用」视图：同花顺的 a-share/fund/meta、企查查的 company/risk/ipr… 各自聚成一张卡；
     组头可重命名/恢复自动识别，单服务应用收在「独立服务」区；也可切回「平铺」；
   - 「工具中心」跨服务搜工具，点开工具抽屉看 schema、填参数、试跑；
-  - 「新增 / 导入 / 导出」（导出支持诊断报告与「仅受管 / 含 profile 行」两种 patch 范围）。
+  - 「新增 / 导入 / 导出」（导出支持诊断报告、「接入片段」与「仅受管 / 含 profile 行」两种 patch 范围）；
+  - 顶部「体检」按钮：分级列出发现，可筛选错误/警告/提示、复制报告；
+  - summary 行下方显示工具 schema 的 token 估算，服务行也有 `~1.2k tok` 徽章。
 - 对话里也可以直接说：「列出我的 MCP 服务」「探测 qcc-company 通的吗」「qcc 有哪些查企业的工具」
-  「用 dryRun 看下这个工具的 schema」「把 Cursor 里的 MCP 配置导入进来」「导出诊断报告」。
+  「用 dryRun 看下这个工具的 schema」「把 Cursor 里的 MCP 配置导入进来」「导出诊断报告」
+  「给全部服务做个体检」「谁在吃 token」「生成一份 Cursor 的接入片段」。
 
 ## 架构
 
@@ -94,7 +102,7 @@ cd dsh-mcp-manager
 │  ctx.tools.execute()  ──► 工具「试用」走同一执行管线（guard/审批/超时）│
 │  ctx.loader.update/create/remove ──► 启停 / 增删 / 编辑（运行时）    │
 └────────────────────────────────────────────────────────────────┘
-        ▲ 15 个对话工具 mcp_manager_*
+        ▲ 19 个对话工具 mcp_manager_*
         ▲ 同源 HTTP：/mcp-manager/api/state、/action（回环 + 同源 + 进程级 token）
         │
 ┌───────┴──────── Web UI（设置页 settings.section）──────────────┐
@@ -120,6 +128,9 @@ Host↔Client 的字段契约见 [`docs/v0.3-api.md`](docs/v0.3-api.md)。
 | `lib/invoke.js` | 工具 schema 解析、示例参数、`ctx.tools.execute` 调用与结果折叠 |
 | `lib/importers.js` | 8 类客户端配置扫描、JSONC 解析、mcpServers 解析 |
 | `lib/export.js` | patch（managed-only / override）/ mcpServers JSON / Markdown / 诊断报告 |
+| `lib/doctor.js` | 体检：状态 / 命令 / cwd / 占位符 / 凭据 / 同名 / 重复端点 / 漂移 / 孤儿工具 / 探针（v0.5） |
+| `lib/tokens.js` | Token 账本：schema 文本量、token 估算（CJK 加权）、按服务/工具排行（v0.5） |
+| `lib/snippets.js` | 接入片段：dsh-patch / cursor / vscode / claude-code / codex（v0.5） |
 | `lib/sanitize.js` | 统一脱敏出口（Bearer/Basic/JWT/URL/query/KEY=value/--token…） |
 | `lib/tools.js` / `lib/web.js` | 对话工具与同源 HTTP API（token 鉴权） |
 
@@ -152,7 +163,8 @@ Host↔Client 的字段契约见 [`docs/v0.3-api.md`](docs/v0.3-api.md)。
 ## 设计参考（GitHub 调研）
 
 v0.2 实现前调研了 DSH 生态 10 个 MCP 面板与 8 个通用 MCP 管理器；v0.3 又做了一轮增量调研
-（12 个 2026 年仍活跃的项目，见 `research/v0.3-github-survey.md`）：
+（12 个 2026 年仍活跃的项目）；v0.5 针对「体检 / Token / 片段」再调研 10 个项目，
+完整清单与采纳理由见 [`research/v0.5-github-survey.md`](research/v0.5-github-survey.md)：
 
 | 借鉴点 | 来源项目 |
 | --- | --- |
@@ -166,16 +178,23 @@ v0.2 实现前调研了 DSH 生态 10 个 MCP 面板与 8 个通用 MCP 管理�
 | 导入 dry-run 预览 + 应用前快照 + 失败回滚（部分借鉴） | xiajiajun516/dsh-config-manager |
 | 状态 chips、工具名搜索、诊断复制 | Js2Hou/dsh-mcp-manager、hyqhyq3/dsh-mcp-manager |
 | 按「应用/profile」组织服务、跨客户端归类视图 | mcpm.sh（virtual profiles）、RealZST/HarnessKit（跨 agent 归类矩阵） |
+| 体检（doctor）把「起不来」提前成一条 error + 修复建议 | pathintegral-institute/mcpm.sh（`mcpm doctor`）、spences10/mcpick（`mcpick_doctor`）、RealZST/HarnessKit（分级审计） |
+| 占位符解析（`${VAR}` / `${env:}` / `${input:}`）与缺变量报错 | ravitemer/mcp-hub、spences10/mcpick（`from_env`） |
+| Token 占用 / token budget（谁在吃上下文） | 2026heshao/dsh-armory（工具裁缝）、Brightwing-Systems-LLC/mcp-manager（token budget） |
+| 多客户端接入片段（Claude Code / Cursor / VS Code / Codex 字段差异） | pathintegral-institute/mcpm.sh（client add）、folay-git/mcp-dock（14 客户端） |
 
 > 只借鉴设计思路，未复制代码；所有实现为本仓库独立编写。
 
-### 后续（v0.5 候选，未实现）
+### 后续（v0.6 候选，未实现）
 
-- 客户端接入片段生成器（一键生成 Claude Code / Cursor / VS Code / DSH 片段）；
-- 服务套件（Kit）内置 starter kit + 空态引导；
-- 官方 MCP Registry `server.json` 导入；
-- 导入向导 v3：明文凭据剥离、逐条冲突、应用前快照与失败回滚；
+- 服务套件（Kit）：内置 starter kit + 空态引导 + 预览后一键批量接入；
+- 官方 MCP Registry `server.json` 导入（离线文件：`packages[].registryType` → command/args 或 oci）；
+- 导入向导 v3：应用前快照 + 失败回滚 + 逐条冲突 UI；
+- 体检的「一键修复」：只做能安全自动处理的（存储修复、enabled 对齐），其余仍给建议；
 - OAuth / 远程注册表 / 网关形态暂不做——那属于连接器而不是本机管理器。
+
+v0.5 已完成原候选清单里的「客户端接入片段生成器」，并把「服务套件 / Registry 导入 / 导入向导 v3」
+挪到 v0.6。
 
 ## 开发与测试
 
@@ -202,6 +221,10 @@ npm test                          # 三套一起跑
 
 - 状态里的「已连接」= 工具已注册，不代表服务端业务可用；探针才是真实握手（但不会调用业务工具）；
 - 「试用」会真实调用工具，可能产生副作用（写数据、发请求）；不确定时先 `dryRun`；
+- 「体检」只做静态检查：不联网、不调用业务工具，因此不会发现「端点挂了」这类运行时问题（那要看探针）；
+  它的环境变量判断基于插件进程的 `process.env` 与记录自身的 `env`，不解析 shell 的 profile；
+- 「Token 账本」是启发式估算（CJK 1 token/字、其余 3.5 字符/token，误差约 ±20%），
+  只用于服务之间横向比较，不要当成计费依据；统计范围是已注册的工具（不含资源/提示词）；
 - 探针 tools/list 只取第一页（不翻 cursor），工具数特别多的服务可能少算；
 - 不做 OAuth 授权流：需要 OAuth 的服务请自行获取 token 后用 `headers`/`env` 传入；
 - 受管存储是明文 JSON（0600 权限），与 `~/.dsh/.env` 同级信任模型；不要把它提交进 git；

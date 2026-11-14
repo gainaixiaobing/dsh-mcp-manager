@@ -1059,3 +1059,165 @@ test('edit panel submits app grouping via patchPrefs after update', async () => 
   assert.ok(patchIndex > updateIndex, 'patchPrefs(app) should run after update');
   assert.deepEqual(posts[patchIndex].params, { server: 'include:mcp-alpha', patch: { app: '我的应用' } });
 });
+
+// ─── v0.5：体检 / Token 账本 / 接入片段 ──────────────────────────────────────
+
+test('doctor button opens the checkup panel, renders findings and filters by severity', async () => {
+  const { posts } = mockFetch({
+    action: async (body) => {
+      if (body.method === 'doctor') {
+        return {
+          generatedAt: '2026-11-14T00:00:00.000Z',
+          summary: { error: 1, warn: 1, info: 0, findings: 2, servers: 2 },
+          findings: [
+            { severity: 'error', code: 'env-missing', serverName: 'alpha', title: '缺少环境变量：FOO', detail: 'FOO ← url', fix: '在 ~/.dsh/.env 补上 FOO' },
+            { severity: 'warn', code: 'duplicate-name', title: '同名条目（共享工具命名空间）', detail: 'a；b', fix: '保留一条' },
+          ],
+        };
+      }
+      return { ok: true };
+    },
+  });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  const open = buttonByText(tree, '体检');
+  assert.ok(open, '面板头部应有「体检」按钮');
+  open.props.onClick();
+  await flush();
+  tree = draw();
+  const text = textOf(tree);
+  assert.match(text, /体检报告/);
+  assert.match(text, /缺少环境变量：FOO/);
+  assert.match(text, /同名条目/);
+  assert.match(text, /1 错误 · 1 警告 · 0 提示/);
+  assert.ok(posts.some((body) => body.method === 'doctor'));
+
+  // 「查看服务」：把搜索框设成该服务名，并收起体检面板
+  const locate = buttonByText(tree, '查看服务');
+  assert.ok(locate, '带 serverName 的 finding 应有跳转按钮');
+  locate.props.onClick();
+  await flush();
+  tree = draw();
+  assert.doesNotMatch(textOf(tree), /体检报告/);
+  const search = findAll(tree, (node) => node.type === 'input' && node.props?.['aria-label']?.includes('搜索服务名'))[0];
+  assert.ok(search, '主面板应有搜索框');
+  assert.equal(search.props.value, 'alpha');
+
+  // 重新打开体检，继续验证 severity chip
+  buttonByText(tree, '体检').props.onClick();
+  await flush();
+  tree = draw();
+  const warnChip = buttonByText(tree, '警告 1');
+  assert.ok(warnChip);
+  warnChip.props.onClick();
+  await flush();
+  tree = draw();
+  assert.doesNotMatch(textOf(tree), /缺少环境变量：FOO/);
+  assert.match(textOf(tree), /同名条目/);
+});
+
+test('doctor panel shows the clean state and the static-only hint', async () => {
+  mockFetch({
+    action: async (body) => (body.method === 'doctor'
+      ? { generatedAt: '2026-11-14T00:00:00.000Z', summary: { error: 0, warn: 0, info: 0, findings: 0, servers: 2 }, findings: [] }
+      : { ok: true }),
+  });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  buttonByText(tree, '体检').props.onClick();
+  await flush();
+  tree = draw();
+  assert.match(textOf(tree), /没有发现问题/);
+  assert.match(textOf(tree), /体检只做静态检查/);
+  // 没有 findings 时「复制报告」应禁用
+  assert.equal(buttonByText(tree, '复制报告').props.disabled, true);
+});
+
+test('token ledger renders a summary line and per-row token chips', async () => {
+  const base = makeState();
+  const alpha = { ...base.servers[0], schemaTokens: 1234, schemaTokensAvg: 617 };
+  const state = makeState({
+    servers: [alpha, base.servers[1]],
+    tokens: {
+      totalTokens: 1234,
+      totalChars: 4000,
+      toolCount: 2,
+      avgTokensPerTool: 617,
+      servers: [],
+      topTools: [],
+      estimator: {},
+    },
+  });
+  mockFetch({ state });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  const text = textOf(draw());
+  assert.match(text, /工具 schema 约 1\.2k tokens（估算，2 个工具 · 平均 617\/工具）/);
+  assert.match(text, /~1\.2k tok/);
+});
+
+test('export panel generates client snippets and re-runs per target', async () => {
+  const { posts } = mockFetch({
+    action: async (body) => {
+      if (body.method === 'snippet') {
+        return {
+          target: body.params.target,
+          label: `snippet-${body.params.target}`,
+          content: '{"mcpServers":{}}',
+          recordCount: 2,
+          warnings: [],
+        };
+      }
+      return { format: body.params?.format ?? 'markdown', content: 'ok', recordCount: 1, warnings: [] };
+    },
+  });
+  const { draw } = mountSection();
+  draw();
+  await flush();
+  let tree = draw();
+  buttonByText(tree, '导出').props.onClick();
+  await flush();
+  tree = draw();
+  const snippetButton = buttonByText(tree, '接入片段');
+  assert.ok(snippetButton, '导出面板应有接入片段入口');
+  snippetButton.props.onClick();
+  await flush();
+  tree = draw();
+  assert.ok(posts.some((body) => body.method === 'snippet' && body.params.target === 'cursor'));
+  assert.match(textOf(tree), /片段默认脱敏/);
+
+  const codex = buttonByText(tree, 'Codex');
+  assert.ok(codex, '目标客户端 chips 应可点击');
+  codex.props.onClick();
+  await flush();
+  assert.ok(posts.some((body) => body.method === 'snippet' && body.params.target === 'codex'));
+});
+
+test('client only references theme tokens that exist in the current theme', () => {
+  // 当前主题的令牌全集（cordis inspect: client Theme.listTokens，2026-11）。
+  // 用了不存在的令牌会静默退回写死灰度，这正是 v0.4.4 里「面板发灰」的根因。
+  const allowed = new Set([
+    '--dsw-alias-bg-base',
+    '--dsw-alias-bg-layer-1',
+    '--dsw-alias-bg-layer-2',
+    '--dsw-alias-bg-overlay',
+    '--dsw-alias-border-l1',
+    '--dsw-alias-border-l2',
+    '--dsw-alias-brand-primary',
+    '--dsw-alias-label-primary',
+    '--dsw-alias-label-secondary',
+    '--dsw-alias-state-error-primary',
+    '--dsw-alias-state-idle-primary',
+    '--dsw-alias-state-success-primary',
+    '--dsw-alias-state-warn-primary',
+    '--dsw-specific-sidebar-fill',
+  ]);
+  const used = [...new Set([...source.matchAll(/--dsw-alias-[a-z0-9-]+/g)].map((match) => match[0]))];
+  assert.ok(used.length > 0);
+  for (const token of used) assert.ok(allowed.has(token), `${token} 不在当前主题令牌里`);
+});

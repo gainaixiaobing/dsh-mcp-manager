@@ -144,6 +144,30 @@ window.__ModuleLoader__.load({
         autoProbeHint: '打开面板时自动探测已启用服务',
         autoProbeFailed: '自动探测设置失败：{message}',
       },
+      doctor: {
+        run: '体检',
+        title: '体检报告',
+        rerun: '重新体检',
+        copy: '复制报告',
+        copied: '已复制',
+        checking: '体检中…',
+        failed: '体检失败：{message}',
+        summary: '{error} 错误 · {warn} 警告 · {info} 提示 · 扫描 {servers} 个服务',
+        clean: '没有发现问题，当前配置看起来是健康的。',
+        emptyFilter: '当前筛选下没有条目。',
+        fix: '建议：{fix}',
+        filterAll: '全部',
+        locate: '查看服务',
+        severity: { error: '错误', warn: '警告', info: '提示' },
+        hint: '体检只做静态检查（不联网、不改配置）：能在握手前发现缺环境变量、命令不在 PATH、同名冲突这类问题。结果是你点开面板那一刻的快照，改过配置请重新体检；真实连通性用「探针」。',
+      },
+      tokens: {
+        title: '工具占用（估算）',
+        summary: '工具 schema 约 {total} tokens（估算，{count} 个工具 · 平均 {avg}/工具）',
+        chip: '~{total} tok',
+        note: '口径：工具名 + 描述 + 参数 schema；CJK 按 1 token/字、其余 3.5 字符/token 估算（±20%），只用于横向比较。',
+        empty: '当前没有注册的 MCP 工具。',
+      },
       notice: {
         serverAdded: '已接入 {name}',
         serverUpdated: '已更新 {name}',
@@ -229,6 +253,9 @@ window.__ModuleLoader__.load({
         json: 'mcpServers JSON',
         markdown: 'Markdown 清单',
         diagnostics: 'diagnostics（排障报告）',
+        snippet: '接入片段',
+        snippetTarget: '目标客户端',
+        snippetHint: '片段默认脱敏：凭据会变成 ${ENV} 占位符，粘贴到别的客户端后请补回真实值。',
         scope: '导出范围（patch）',
         scopeManaged: '仅受管（默认）',
         scopeAll: '含 profile 行',
@@ -369,6 +396,30 @@ window.__ModuleLoader__.load({
         autoProbeHint: 'Probe enabled servers when this panel opens',
         autoProbeFailed: 'Failed to update auto-probe: {message}',
       },
+      doctor: {
+        run: 'Checkup',
+        title: 'Checkup report',
+        rerun: 'Run again',
+        copy: 'Copy report',
+        copied: 'Copied',
+        checking: 'Checking…',
+        failed: 'Checkup failed: {message}',
+        summary: '{error} errors · {warn} warnings · {info} notes · {servers} servers scanned',
+        clean: 'No problems found — the current configuration looks healthy.',
+        emptyFilter: 'Nothing matches this filter.',
+        fix: 'Fix: {fix}',
+        filterAll: 'All',
+        locate: 'Show server',
+        severity: { error: 'Error', warn: 'Warning', info: 'Note' },
+        hint: 'The checkup is static only (no network, no config changes): it catches missing env vars, commands not on PATH and duplicate names before a handshake. The report is a snapshot taken when you open it — run it again after edits. Use "Probe" for real connectivity.',
+      },
+      tokens: {
+        title: 'Tool footprint (estimate)',
+        summary: '~{total} tokens of tool schemas (estimated; {count} tools · ~{avg}/tool)',
+        chip: '~{total} tok',
+        note: 'Basis: tool name + description + parameter schema; CJK counted as 1 token/char, the rest at 3.5 chars/token (±20%). Compare only, not a billing estimate.',
+        empty: 'No MCP tool is registered right now.',
+      },
       notice: {
         serverAdded: 'Added {name}',
         serverUpdated: 'Updated {name}',
@@ -454,6 +505,9 @@ window.__ModuleLoader__.load({
         json: 'mcpServers JSON',
         markdown: 'Markdown inventory',
         diagnostics: 'diagnostics (troubleshooting report)',
+        snippet: 'Client snippet',
+        snippetTarget: 'Target client',
+        snippetHint: 'Snippets are redacted by default: credentials become ${ENV} placeholders — fill in the real values in the other client.',
         scope: 'Patch scope',
         scopeManaged: 'Managed only (default)',
         scopeAll: 'Include profile rows',
@@ -721,6 +775,48 @@ window.__ModuleLoader__.load({
       },
       emptyIcon: { fontSize: '22px', lineHeight: '26px', opacity: 0.85 },
       emptyText: { margin: 0, fontSize: '12.5px', lineHeight: '19px' },
+      // v0.5 体检
+      findingRow: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        padding: '10px 12px',
+        borderRadius: '10px',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16))',
+        background: 'var(--dsw-alias-bg-layer-1, transparent)',
+      },
+      findingTitle: {
+        minWidth: 0,
+        fontSize: '13px',
+        fontWeight: 600,
+        color: 'var(--dsw-alias-label-primary)',
+        overflowWrap: 'anywhere',
+      },
+      findingFix: { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-secondary, inherit)', overflowWrap: 'anywhere' },
+      findingDetail: {
+        margin: 0,
+        fontSize: '11.5px',
+        lineHeight: '18px',
+        color: 'var(--dsw-alias-label-secondary)',
+        overflowWrap: 'anywhere',
+      },
+      findingList: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        maxHeight: '420px',
+        overflowY: 'auto',
+        paddingRight: '2px',
+      },
+      severityBadge: {
+        flex: 'none',
+        fontSize: '11px',
+        fontWeight: 600,
+        lineHeight: '16px',
+        padding: '1px 7px',
+        borderRadius: '999px',
+        border: '1px solid currentColor',
+      },
     };
 
     /** 交互态（hover / focus / 动画）只能交给样式表：内联 style 无法表达伪类。 */
@@ -777,6 +873,15 @@ window.__ModuleLoader__.load({
         (text, [name, value]) => text.split(`{${name}}`).join(String(value)),
         template,
       );
+    }
+
+    /** token 数量级展示（1.2k / 34k / 1.2M），与 host 的 formatTokens 同口径。 */
+    function formatTokenAmount(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number <= 0) return '0';
+      if (number < 1000) return String(Math.round(number));
+      if (number < 1_000_000) return `${(number / 1000).toFixed(number < 10_000 ? 1 : 0)}k`;
+      return `${(number / 1_000_000).toFixed(1)}M`;
     }
 
     function tokenOf() {
@@ -1904,20 +2009,38 @@ window.__ModuleLoader__.load({
 
     // ── 导出面板 ────────────────────────────────────────────────────────────
 
+    const SNIPPET_TARGETS = [
+      ['dsh-patch', 'DSH patch'],
+      ['cursor', 'Cursor / Claude Desktop'],
+      ['vscode', 'VS Code'],
+      ['claude-code', 'Claude Code'],
+      ['codex', 'Codex'],
+    ];
+
     function ExportPanel({ t, onClose }) {
       const [result, setResult] = React.useState(undefined);
       const [busy, setBusy] = React.useState(false);
       const [copied, setCopied] = React.useState(false);
       const [error, setError] = React.useState('');
       const [includeProfile, setIncludeProfile] = React.useState(false);
+      const [activeFormat, setActiveFormat] = React.useState('');
+      const [snippetTarget, setSnippetTarget] = React.useState('cursor');
 
-      const run = async (format) => {
+      const run = async (format, nextTarget) => {
         setBusy(true);
         setError('');
+        setActiveFormat(format);
         try {
-          const params = { format };
-          if (format === 'patch') params.includeProfile = includeProfile === true;
-          const value = await api.action('export', params);
+          let value;
+          if (format === 'snippet') {
+            const target = nextTarget ?? snippetTarget;
+            setSnippetTarget(target);
+            value = await api.action('snippet', { target, redact: true });
+          } else {
+            const params = { format };
+            if (format === 'patch') params.includeProfile = includeProfile === true;
+            value = await api.action('export', params);
+          }
           setResult(value);
         } catch (failure) {
           setError(format(t, 'exporter.failed', { message: String(failure?.message ?? failure) }));
@@ -1932,7 +2055,10 @@ window.__ModuleLoader__.load({
           const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
           const href = URL.createObjectURL(blob);
           const anchor = document.createElement('a');
-          const ext = result?.format === 'json' ? 'json' : result?.format === 'markdown' || result?.format === 'diagnostics' ? 'md' : 'yml';
+          const active = result?.format ?? activeFormat;
+          const ext = active === 'json' ? 'json'
+            : active === 'markdown' || active === 'diagnostics' ? 'md'
+              : active === 'snippet' ? 'txt' : 'yml';
           anchor.href = href;
           anchor.download = `mcp-manager-export.${ext}`;
           anchor.click();
@@ -1957,6 +2083,7 @@ window.__ModuleLoader__.load({
         { format: 'json', label: t('exporter.json') },
         { format: 'markdown', label: t('exporter.markdown') },
         { format: 'diagnostics', label: t('exporter.diagnostics') },
+        { format: 'snippet', label: t('exporter.snippet') },
       ];
 
       return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
@@ -1969,6 +2096,20 @@ window.__ModuleLoader__.load({
             onClick: () => run(item.format),
             disabled: busy,
           }, item.label))),
+        activeFormat === 'snippet'
+          ? h('div', { style: styles.healthRow },
+            h('span', { style: styles.label }, t('exporter.snippetTarget')),
+            h('div', { style: styles.segmented, role: 'group', 'aria-label': t('exporter.snippetTarget') },
+              SNIPPET_TARGETS.map(([value, label]) => h('button', {
+                key: value,
+                type: 'button',
+                'aria-pressed': snippetTarget === value,
+                className: 'mcpmm-btn', style: styles.button,
+                onClick: () => run('snippet', value),
+                disabled: busy,
+              }, label))),
+            h('span', { style: styles.hint }, t('exporter.snippetHint')))
+          : null,
         h('div', { style: styles.scopeRow },
           h('span', { style: styles.label }, t('exporter.scope')),
           h('label', { style: styles.candidate },
@@ -1991,7 +2132,7 @@ window.__ModuleLoader__.load({
         result
           ? h('div', null,
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
-              h('span', { style: styles.label }, `${result.format} · ${result.recordCount ?? 0}`),
+              h('span', { style: styles.label }, `${result.format ?? result.label ?? activeFormat} · ${result.recordCount ?? 0}`),
               h('div', { style: { display: 'flex', gap: '8px' } },
                 h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: download }, t('exporter.download')),
                 h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: copy }, copied ? t('exporter.copied') : t('exporter.copy')))),
@@ -2005,6 +2146,116 @@ window.__ModuleLoader__.load({
         error ? h('p', { style: styles.error }, error) : null,
         h('div', { style: { display: 'flex', justifyContent: 'flex-end' } },
           h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onClose, disabled: busy }, t('close'))));
+    }
+
+    // ── 体检（v0.5）─────────────────────────────────────────────────────────
+
+    const SEVERITY_COLOR = {
+      error: 'var(--dsw-alias-state-error-primary, #d0563b)',
+      warn: 'var(--dsw-alias-state-warn-primary, #d08b24)',
+      // 主题里没有 label-tertiary：提示级用 idle（中性状态色），避免退回写死灰度。
+      info: 'var(--dsw-alias-state-idle-primary, #8a8f98)',
+    };
+
+    function DoctorPanel({ t, onClose, onLocate }) {
+      const [report, setReport] = React.useState(null);
+      const [busy, setBusy] = React.useState(true);
+      const [error, setError] = React.useState('');
+      const [filter, setFilter] = React.useState('');
+      const [copied, setCopied] = React.useState(false);
+      const mounted = React.useRef(true);
+      React.useEffect(() => () => { mounted.current = false; }, []);
+
+      const run = async () => {
+        setBusy(true);
+        setError('');
+        try {
+          const result = await api.action('doctor', {});
+          if (mounted.current) setReport(result ?? null);
+        } catch (failure) {
+          if (mounted.current) setError(format(t, 'doctor.failed', { message: String(failure?.message ?? failure) }));
+        } finally {
+          if (mounted.current) setBusy(false);
+        }
+      };
+
+      React.useEffect(() => { run(); }, []);
+
+      const findings = Array.isArray(report?.findings) ? report.findings : [];
+      const counts = { error: 0, warn: 0, info: 0 };
+      for (const finding of findings) counts[finding.severity] = (counts[finding.severity] ?? 0) + 1;
+      const visible = filter === '' ? findings : findings.filter((finding) => finding.severity === filter);
+      const summaryText = format(t, 'doctor.summary', {
+        error: counts.error,
+        warn: counts.warn,
+        info: counts.info,
+        servers: report?.summary?.servers ?? 0,
+      });
+
+      const copyReport = async () => {
+        const lines = [summaryText];
+        for (const finding of findings) {
+          lines.push('');
+          lines.push(`[${t(`doctor.severity.${finding.severity}`)}] ${finding.serverName ? `${finding.serverName} · ` : ''}${finding.title}`);
+          if (finding.detail) lines.push(`  ${finding.detail}`);
+          if (finding.fix) lines.push(`  ${format(t, 'doctor.fix', { fix: finding.fix })}`);
+        }
+        try {
+          await copyText(lines.join('\n'));
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          /* 剪贴板不可用时忽略 */
+        }
+      };
+
+      return h('div', { className: 'mcpmm-card mcpmm-panel', style: styles.panel },
+        h('div', { style: styles.healthRow },
+          h('h4', { style: styles.panelTitle }, t('doctor.title')),
+          h('span', { style: styles.healthSpacer }),
+          report !== null ? h('span', { style: styles.hint }, summaryText) : null),
+        h('div', { style: styles.healthRow },
+          h('div', { style: styles.segmented, role: 'group', 'aria-label': t('doctor.title') },
+            ['', 'error', 'warn', 'info'].map((key) => h('button', {
+              key: key === '' ? 'all' : key,
+              type: 'button',
+              'aria-pressed': filter === key,
+              className: 'mcpmm-btn',
+              style: styles.button,
+              onClick: () => setFilter(key),
+            }, key === '' ? t('doctor.filterAll') : `${t(`doctor.severity.${key}`)} ${counts[key]}`))),
+          h('span', { style: styles.healthSpacer }),
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: run, disabled: busy }, busy ? t('doctor.checking') : t('doctor.rerun')),
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: copyReport, disabled: findings.length === 0 }, copied ? t('doctor.copied') : t('doctor.copy'))),
+        error !== '' ? h('p', { style: styles.error }, error) : null,
+        report === null && busy ? h('p', { style: styles.hint }, t('doctor.checking')) : null,
+        report !== null && findings.length === 0 ? h('p', { style: styles.ok }, t('doctor.clean')) : null,
+        findings.length > 0 && visible.length === 0 ? h('p', { style: styles.hint }, t('doctor.emptyFilter')) : null,
+        visible.length > 0
+          ? h('div', { style: styles.findingList },
+            visible.map((finding, index) => h('div', {
+              key: `${finding.code}-${finding.serverName ?? ''}-${index}`,
+              style: styles.findingRow,
+            },
+              h('div', { style: styles.healthRow },
+                h('span', { style: { ...styles.severityBadge, color: SEVERITY_COLOR[finding.severity] ?? SEVERITY_COLOR.info } },
+                  t(`doctor.severity.${finding.severity}`)),
+                finding.serverName ? h(Tag, { title: finding.serverName }, finding.serverName) : null,
+                h('span', { style: styles.findingTitle }, String(finding.title ?? '')),
+                finding.serverName && typeof onLocate === 'function'
+                  ? h('button', {
+                    type: 'button',
+                    className: 'mcpmm-link',
+                    style: { ...styles.link, flex: 'none' },
+                    onClick: () => onLocate(finding.serverName),
+                  }, t('doctor.locate'))
+                  : null),
+              finding.detail ? h('p', { style: styles.findingDetail }, String(finding.detail)) : null,
+              finding.fix ? h('p', { style: styles.findingFix }, format(t, 'doctor.fix', { fix: finding.fix })) : null)))
+          : null,
+        h('p', { style: styles.hint }, t('doctor.hint')),
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end' } },
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: onClose }, t('close'))));
     }
 
     // ── 应用组卡（v0.4）─────────────────────────────────────────────────────
@@ -2130,6 +2381,9 @@ window.__ModuleLoader__.load({
               server.endpoint ? h('span', { style: styles.endpoint, title: server.endpoint }, server.endpoint) : null,
               h('span', { style: styles.rowMetaChip, title: server.transport }, server.transport),
               h('span', { style: styles.rowMetaText }, format(t, 'toolCount', { count: server.toolCount ?? 0 })),
+              Number(server.schemaTokens) > 0
+                ? h('span', { style: styles.rowMetaChip, title: t('tokens.note') }, format(t, 'tokens.chip', { total: formatTokenAmount(server.schemaTokens) }))
+                : null,
               toolNames.length > 0
                 ? h('button', { type: 'button', className: 'mcpmm-link', style: styles.link, 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
                   expanded ? t('hideTools') : t('showTools'))
@@ -2226,6 +2480,7 @@ window.__ModuleLoader__.load({
       const [editing, setEditing] = React.useState(null);
       const [importing, setImporting] = React.useState(false);
       const [exporting, setExporting] = React.useState(false);
+      const [doctorOpen, setDoctorOpen] = React.useState(false);
       const [selection, setSelection] = React.useState(null);
       const [probes, setProbes] = React.useState({});
       const [busy, setBusy] = React.useState({});
@@ -2258,6 +2513,7 @@ window.__ModuleLoader__.load({
             storeError: payload?.storeError,
             prefsError: payload?.prefsError,
             provisionFailures: payload?.provisionFailures ?? {},
+            tokens: payload?.tokens ?? null,
             message: '',
           });
         } catch (error) {
@@ -2500,6 +2756,7 @@ window.__ModuleLoader__.load({
             h('h3', { style: styles.title }, t('title')),
             h('p', { style: styles.subtitle }, t('subtitle')))),
         h('div', { style: styles.headerActions },
+          h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: () => setDoctorOpen((value) => !value), 'aria-expanded': doctorOpen === true }, t('doctor.run')),
           h('button', { type: 'button', className: 'mcpmm-btn', style: styles.button, onClick: load }, t('refresh'))));
 
       if (state.phase === 'loading') {
@@ -2542,6 +2799,13 @@ window.__ModuleLoader__.load({
             connected: summary.connected,
             disabled: summary.disabled,
             tools: summary.toolCount,
+          }))
+          : null,
+        state.tokens && Number(state.tokens.totalTokens) > 0
+          ? h('div', { style: styles.summary, title: t('tokens.note') }, format(t, 'tokens.summary', {
+            total: formatTokenAmount(state.tokens.totalTokens),
+            count: state.tokens.toolCount ?? 0,
+            avg: formatTokenAmount(state.tokens.avgTokensPerTool),
           }))
           : null,
         state.storeError ? h('p', { style: styles.error }, format(t, 'storeError', { message: state.storeError })) : null,
@@ -2628,6 +2892,18 @@ window.__ModuleLoader__.load({
           : null,
         exporting
           ? h(ExportPanel, { t, onClose: () => setExporting(false) })
+          : null,
+        doctorOpen
+          ? h(DoctorPanel, {
+            t,
+            onClose: () => setDoctorOpen(false),
+            onLocate: (serverName) => {
+              setQuery(String(serverName));
+              setStatusFilter('');
+              setAppFilter('');
+              setDoctorOpen(false);
+            },
+          })
           : null,
 
         h(ToolCenter, {
